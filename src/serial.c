@@ -117,20 +117,20 @@ int initialize_sources( uint	size[2],
 			int    	Sources,
 			int     **Nsources);
 
-int initialize ( int		argc,                	// the argc from command line
+int initialize ( int		argc,         // the argc from command line
 		 char   	**argv,                	// the argv from command line
 		 int     	*S,                   	// two-uint array defining the x,y dimensions of the grid
 		 int     	*periodic,            	// periodic-boundary tag
 		 int     	*Niterations,         	// how many iterations
 		 int     	*Nsources,            	// how many heat sources
-		 int    	**Sources,
+		 int    	**Sources,              // the heat sources
 		 double  	*energy_per_source,   	// how much heat per source
-		 double 	**planes,
-		 int     	*output_energy_at_steps,
-		 int     	*injection_frequency
+		 double 	**planes,             	// the two planes
+		 int     	*output_energy_at_steps,// whether to output the energy at every step
+		 int     	*injection_frequency    // how often to inject energy
 		 )
 {
-  int ret;
+  int ret;  // return value
   
   // ··································································
   // set default values
@@ -219,7 +219,31 @@ int initialize ( int		argc,                	// the argc from command line
    *
    */
 
-  // ...
+  if ( S[_x_] < 1 || S[_y_] < 1 )
+    {
+      printf("error: the size of the plate must be positive\n");
+      exit(1);
+    }
+  if ( *Niterations < 1 )
+    {
+      printf("error: the number of iterations must be positive\n");
+      exit(1);
+    }
+  if ( *Nsources < 1 )
+    {
+      printf("error: the number of heat sources must be positive\n");
+      exit(1);
+    }
+  if ( *energy_per_source <= 0 )
+    {
+      printf("error: the energy per source must be positive\n");
+      exit(1);
+    }
+  if ( *injection_frequency < 1 || *injection_frequency > *Niterations )
+    {
+      printf("error: the injection frequency must be in [1,%d]\n", *Niterations);
+      exit(1);
+    }
   
 
   // ··································································
@@ -252,8 +276,7 @@ int memory_allocate ( const int      	size[2],
 {
   if (planes_ptr == NULL )
     // an invalid pointer has been passed
-    // manage the situation
-    ;
+    return 1;
 
   unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
 
@@ -302,6 +325,7 @@ int memory_release ( double *data, int *sources )
 
 
 int dump ( const double *data, const uint size[2], const char *filename, double *min, double *max )
+/* dump the data in a binary file, in single precision */
 {
   if ( (filename != NULL) && (filename[0] != '\0') )
     {

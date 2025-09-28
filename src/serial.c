@@ -1,20 +1,7 @@
-/*
-
-/*
- *
- *  mysizex   :   local x-extendion of your patch
- *  mysizey   :   local y-extension of your patch
- *
- */
-
-
 #include "serial.h"
 
 #define uint unsigned int
 
-int dump ( const double *, const uint [2], const char *, double *, double * );
-
-// ------------------------------------------------------------------
 // ------------------------------------------------------------------
 
 int main(int argc, char **argv)
@@ -92,43 +79,20 @@ int main(int argc, char **argv)
   return 0;
 }
 
+// ------------------------------------------------------------------
 
-/* ==========================================================================
-   =                                                                        =
-   =   routines called within the integration loop                          =
-   ========================================================================== */
-
-
-
-
-
-/* ==========================================================================
-   =                                                                        =
-   =   initialization                                                       =
-   ========================================================================== */
-
-
-
-int memory_allocate ( const int size[2],
-		      double 	**planes_ptr);
-
-
-int initialize_sources( uint	size[2],
-			int    	Sources,
-			int     **Nsources);
-
-int initialize ( int		argc,         // the argc from command line
-		 char   	**argv,                	// the argv from command line
-		 int     	*S,                   	// two-uint array defining the x,y dimensions of the grid
-		 int     	*periodic,            	// periodic-boundary tag
-		 int     	*Niterations,         	// how many iterations
-		 int     	*Nsources,            	// how many heat sources
-		 int    	**Sources,              // the heat sources
-		 double  	*energy_per_source,   	// how much heat per source
-		 double 	**planes,             	// the two planes
-		 int     	*output_energy_at_steps,// whether to output the energy at every step
-		 int     	*injection_frequency    // how often to inject energy
-		 )
+int initialize (  int		    argc,                   // the argc from command line
+		              char   	  **argv,                	// the argv from command line
+                  int     	*S,                   	// two-uint array defining the x,y dimensions of the grid
+                  int     	*periodic,            	// periodic-boundary tag
+                  int     	*Niterations,         	// how many iterations
+                  int     	*Nsources,            	// how many heat sources
+                  int    	  **Sources,              // the heat sources
+                  double  	*energy_per_source,   	// how much heat per source
+                  double 	  **planes,             	// the two planes
+                  int     	*output_energy_at_steps,// whether to output the energy at every step
+                  int     	*injection_frequency    // how often to inject energy
+		            )
 {
   int ret;  // return value
   
@@ -261,70 +225,120 @@ int initialize ( int		argc,         // the argc from command line
   return 0;  
 }
 
-
-int memory_allocate ( const int      	size[2],
-		            double	**planes_ptr )
+int update_plane (const int     periodic, 
+                  const int     size[2],
+			            const double  *old,
+                  double        *new
+                  )
 /*
- * allocate the memory for the planes
- * we need 2 planes: the first contains the
- * current data, the second the updated data
+ * calculate the new energy values
+ * the old plane contains the current data, the new plane
+ * will store the updated data
  *
- * in the integration loop then the roles are
- * swapped at every iteration
+ * NOTE: in parallel, every MPI task will perform the
+ *       calculation for its patch
  *
  */
 {
-  if (planes_ptr == NULL )
-    // an invalid pointer has been passed
-    return 1;
+    const int register fxsize = size[_x_]+2;
+    const int register fysize = size[_y_]+2;
+    const int register xsize = size[_x_];
+    const int register ysize = size[_y_];
+    
+   #define IDX( i, j ) ( (j)*fxsize + (i) )
 
-  unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
+    // HINT: you may attempt to
+    //       (i)  manually unroll the loop
+    //       (ii) ask the compiler to do it
+    // for instance
+    // #pragma GCC unroll 4
+    //
+    // HINT: in any case, this loop is a good candidate
+    //       for openmp parallelization
+    for (int j = 1; j <= ysize; j++)
+        for ( int i = 1; i <= xsize; i++)
+            {
+                //
+                // five-points stencil formula
+                //
 
-  planes_ptr[OLD] = (double*)malloc( 2*bytes*sizeof(double) );
-  memset ( planes_ptr[OLD], 0, 2*bytes*sizeof(double) );
-  planes_ptr[NEW] = planes_ptr[OLD] + bytes;
-      
-  return 0;
+                
+                // simpler stencil with no explicit diffusivity
+                // always conserve the smoohed quantity
+                // alpha here mimics how much "easily" the heat
+                // travels
+                
+                double alpha = 0.6;
+                double result = old[ IDX(i,j) ] *alpha;
+                double sum_i  = (old[IDX(i-1, j)] + old[IDX(i+1, j)]) / 4.0 * (1-alpha);
+                double sum_j  = (old[IDX(i, j-1)] + old[IDX(i, j+1)]) / 4.0 * (1-alpha);
+                result += (sum_i + sum_j );
+                
+
+                /*
+
+                  // implentation from the derivation of
+                  // 3-points 2nd order derivatives
+                  // however, that should depends on an adaptive
+                  // time-stepping so that given a diffusivity
+                  // coefficient the amount of energy diffused is
+                  // "small"
+                  // however the imlic methods are not stable
+                  
+               #define alpha_guess 0.5     // mimic the heat diffusivity
+
+                double alpha = alpha_guess;
+                double sum = old[IDX(i,j)];
+                
+                int   done = 0;
+                do
+                    {                
+                        double sum_i = alpha * (old[IDX(i-1, j)] + old[IDX(i+1, j)] - 2*sum);
+                        double sum_j = alpha * (old[IDX(i, j-1)] + old[IDX(i, j+1)] - 2*sum);
+                        result = sum + ( sum_i + sum_j);
+                        double ratio = fabs((result-sum)/(sum!=0? sum : 1.0));
+                        done = ( (ratio < 2.0) && (result >= 0) );    // not too fast diffusion and
+                                                                     // not so fast that the (i,j)
+                                                                     // goes below zero energy
+                        alpha /= 2;
+                    }
+                while ( !done );
+                */
+
+                new[ IDX(i,j) ] = result;
+                
+            }
+
+    if ( periodic )
+        /*
+         * propagate boundaries if they are periodic
+         *
+         * NOTE: when is that needed in distributed memory, if any?
+         */
+        {
+            for ( int i = 1; i <= xsize; i++ )
+                {
+                    new[ i ] = new[ IDX(i, ysize) ];
+                    new[ IDX(i, ysize+1) ] = new[ i ];
+                }
+            for ( int j = 1; j <= ysize; j++ )
+                {
+                    new[ IDX( 0, j) ] = new[ IDX(xsize, j) ];
+                    new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
+                }
+        }
+    
+    return 0;
+
+   #undef IDX
 }
 
-
-int initialize_sources( uint  	size[2],
-			int    	Nsources,
-			int  	**Sources )
-/*
- * randomly spread heat suources
- *
- */
-{
-  *Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
-  for ( int s = 0; s < Nsources; s++ )
-    {
-      (*Sources)[s*2] = 1+ lrand48() % size[_x_];
-      (*Sources)[s*2+1] = 1+ lrand48() % size[_y_];
-    }
-
-  return 0;
-}
-
-
-
-int memory_release ( double *data, int *sources )
-  
-{
-  if( data != NULL )
-    free( data );
-
-  if( sources != NULL )
-    free( sources );
-
-  
-  
-  return 0;
-}
-
-
-
-int dump ( const double *data, const uint size[2], const char *filename, double *min, double *max )
+int dump (        const double  *data, 
+                  const uint    size[2], 
+                  const char    *filename, 
+                  double        *min, 
+                  double        *max
+          )
 /* dump the data in a binary file, in single precision */
 {
   if ( (filename != NULL) && (filename[0] != '\0') )
@@ -367,4 +381,3 @@ int dump ( const double *data, const uint size[2], const char *filename, double 
   else return 1;
   
 }
-

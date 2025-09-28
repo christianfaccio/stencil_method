@@ -1,9 +1,3 @@
-/* -*- Mode: C; c-basic-offset:4 ; indent-tabs-mode:nil ; -*- */
-/*
- * See COPYRIGHT in top-level directory.
- */
-
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,7 +6,6 @@
 #include <time.h>
 #include <float.h>
 #include <math.h>
-
 
 
 #define NORTH 0
@@ -29,56 +22,67 @@
 #define _x_ 0
 #define _y_ 1
 
-
+#define uint unsigned int 
 
 // ============================================================
 //
 // function prototypes
 
-int initialize ( int	argc,			// argc from cmd line
-		 char	**argv,			// argv from cmd line
-		 int	*S,			// two-uint array defining x,y dims of grid
-		 int	*periodic,		// periodic-boundary tag
-		 int 	*Niterations,		// n. iterations
-		 int   	*Nsources,		// n. heat sources
-		 int  	**Sources,
-		 double *energy_per_source,	// how much heat per source
-		 double **planes,		
-                 int   	*output_energy_at_steps,
-                 int   	*injection_frequency
-		 );
+int initialize (    int         argc,			        // argc from cmd line
+		            char	    **argv,			        // argv from cmd line
+		            int	        *S,			            // two-uint array defining x,y dims of grid
+		            int	        *periodic,		        // periodic-boundary tag
+		            int 	    *Niterations,		    // n. iterations
+		            int   	    *Nsources,		        // n. heat sources
+		            int  	    **Sources,              // the heat sources
+		            double      *energy_per_source,	    // how much heat per source
+		            double      **planes,		        // the two planes
+                    int   	    *output_energy_at_steps,// whether to output the energy at every step
+                    int   	    *injection_frequency    // how often to inject energy
+		        );  
 
-int memory_release ( double *data, int *sources);
+int update_plane (const int     periodic, 
+                  const int     size[2],
+			            const double  *old,
+                  double        *new
+                );   
 
-
-extern int inject_energy ( const  int periodic,
-                           const int Nsources,
-			   const int   *Sources,
-			   const double energy,
-			   const int mysize[2],
-                                 double *plane);
-
-extern int update_plane ( const int periodic,
-			  const int size[2],
-			  const double *old,
-		                double *new);
-
-
-extern int get_total_energy( const int size[2],
-                             const double *plane,
-                             double *energy);
+int dump (          const double  *data, 
+                    const uint    size[2], 
+                    const char    *filename, 
+                    double        *min, 
+                    double        *max
+            );
 
 
 // ============================================================
-//
-// function definition for inline functions
 
-inline int inject_energy ( const int     periodic,
-                           const int     Nsources,
-			   const int    *Sources,
-			   const double  energy,
-			   const int     mysize[2],
-                           double *plane )
+static inline int initialize_sources(   uint        size[2],
+			                            int    	    Nsources,
+			                            int  	    **Sources
+                                    )
+/*
+ * randomly spread heat suources
+ *
+ */
+{
+  *Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
+  for ( int s = 0; s < Nsources; s++ )
+    {
+      (*Sources)[s*2] = 1+ lrand48() % size[_x_];
+      (*Sources)[s*2+1] = 1+ lrand48() % size[_y_];
+    }
+
+  return 0;
+}
+
+static inline int inject_energy (   const int       periodic,
+                                    const int       Nsources,
+			                        const int       *Sources,
+			                        const double    energy,
+			                        const int       mysize[2],
+                                    double          *plane 
+                                )
 {
    #define IDX( i, j ) ( (j)*(mysize[_x_]+2) + (i) )
     for (int s = 0; s < Nsources; s++) {
@@ -103,122 +107,12 @@ inline int inject_energy ( const int     periodic,
     
     return 0;
 }
-
-
-
-
-inline int update_plane ( const int     periodic, 
-                          const int     size[2],
-			  const double *old    ,
-                                double *new    )
-/*
- * calculate the new energy values
- * the old plane contains the current data, the new plane
- * will store the updated data
- *
- * NOTE: in parallel, every MPI task will perform the
- *       calculation for its patch
- *
- */
-{
-    const int register fxsize = size[_x_]+2;
-    const int register fysize = size[_y_]+2;
-    const int register xsize = size[_x_];
-    const int register ysize = size[_y_];
-    
-   #define IDX( i, j ) ( (j)*fxsize + (i) )
-
-    // HINT: you may attempt to
-    //       (i)  manually unroll the loop
-    //       (ii) ask the compiler to do it
-    // for instance
-    // #pragma GCC unroll 4
-    //
-    // HINT: in any case, this loop is a good candidate
-    //       for openmp parallelization
-    for (int j = 1; j <= ysize; j++)
-        for ( int i = 1; i <= xsize; i++)
-            {
-                //
-                // five-points stencil formula
-                //
-
-                
-                // simpler stencil with no explicit diffusivity
-                // always conserve the smoohed quantity
-                // alpha here mimics how much "easily" the heat
-                // travels
-                
-                double alpha = 0.6;
-                double result = old[ IDX(i,j) ] *alpha;
-                double sum_i  = (old[IDX(i-1, j)] + old[IDX(i+1, j)]) / 4.0 * (1-alpha);
-                double sum_j  = (old[IDX(i, j-1)] + old[IDX(i, j+1)]) / 4.0 * (1-alpha);
-                result += (sum_i + sum_j );
-                
-
-                /*
-
-                  // implentation from the derivation of
-                  // 3-points 2nd order derivatives
-                  // however, that should depends on an adaptive
-                  // time-stepping so that given a diffusivity
-                  // coefficient the amount of energy diffused is
-                  // "small"
-                  // however the imlic methods are not stable
-                  
-               #define alpha_guess 0.5     // mimic the heat diffusivity
-
-                double alpha = alpha_guess;
-                double sum = old[IDX(i,j)];
-                
-                int   done = 0;
-                do
-                    {                
-                        double sum_i = alpha * (old[IDX(i-1, j)] + old[IDX(i+1, j)] - 2*sum);
-                        double sum_j = alpha * (old[IDX(i, j-1)] + old[IDX(i, j+1)] - 2*sum);
-                        result = sum + ( sum_i + sum_j);
-                        double ratio = fabs((result-sum)/(sum!=0? sum : 1.0));
-                        done = ( (ratio < 2.0) && (result >= 0) );    // not too fast diffusion and
-                                                                     // not so fast that the (i,j)
-                                                                     // goes below zero energy
-                        alpha /= 2;
-                    }
-                while ( !done );
-                */
-
-                new[ IDX(i,j) ] = result;
-                
-            }
-
-    if ( periodic )
-        /*
-         * propagate boundaries if they are periodic
-         *
-         * NOTE: when is that needed in distributed memory, if any?
-         */
-        {
-            for ( int i = 1; i <= xsize; i++ )
-                {
-                    new[ i ] = new[ IDX(i, ysize) ];
-                    new[ IDX(i, ysize+1) ] = new[ i ];
-                }
-            for ( int j = 1; j <= ysize; j++ )
-                {
-                    new[ IDX( 0, j) ] = new[ IDX(xsize, j) ];
-                    new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
-                }
-        }
-    
-    return 0;
-
-   #undef IDX
-}
-
  
 
-inline int get_total_energy( const int     size[2],
-                             const double *plane,
-                                   double *energy )
+static inline int get_total_energy( const int       size[2],
+                                    const double    *plane,
+                                    double          *energy
+                                )
 /*
  * NOTE: this routine a good candiadate for openmp
  *       parallelization
@@ -250,3 +144,44 @@ inline int get_total_energy( const int     size[2],
     return 0;
 }
                             
+static inline int memory_allocate ( const int       size[2],
+		                            double	        **planes_ptr
+                                )
+/*
+ * allocate the memory for the planes
+ * we need 2 planes: the first contains the
+ * current data, the second the updated data
+ *
+ * in the integration loop then the roles are
+ * swapped at every iteration
+ *
+ */
+{
+  if (planes_ptr == NULL )  
+    // an invalid pointer has been passed
+    return 1;
+
+  unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
+
+  planes_ptr[OLD] = (double*)malloc( 2*bytes*sizeof(double) );
+  memset ( planes_ptr[OLD], 0, 2*bytes*sizeof(double) );
+  planes_ptr[NEW] = planes_ptr[OLD] + bytes;
+      
+  return 0;
+}
+
+static inline int memory_release (  double *data, 
+                                    int *sources
+                                )
+  
+{
+  if( data != NULL )
+    free( data );
+
+  if( sources != NULL )
+    free( sources );
+
+  
+  
+  return 0;
+}

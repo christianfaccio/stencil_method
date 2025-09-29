@@ -6,7 +6,7 @@
 
 int main(int argc, char **argv)
 {
-
+  /* init */
   int  Niterations;
   int  periodic;
   int  S[2];
@@ -22,53 +22,45 @@ int main(int argc, char **argv)
   int injection_frequency;
   int output_energy_at_steps = 0;
    
-  /* argument checking and setting */
   initialize ( argc, argv, &S[0], &periodic, &Niterations,
 	       &Nsources, &Sources, &energy_per_source, &planes[0],
 	       &output_energy_at_steps, &injection_frequency );
   
-  
   int current = OLD;
 
-  if ( injection_frequency > 1 )
-    inject_energy( periodic, Nsources, Sources, energy_per_source, S, planes[current] );
-  
+  /* main loop */
   for (int iter = 0; iter < Niterations; iter++)
-    
-    {      
-      /* new energy from sources */
-
+    {
+      /* (opt) inject energy */
       if ( iter % injection_frequency == 0 )
-	{
-	  inject_energy( periodic, Nsources, Sources, energy_per_source, S, planes[current] );
-	  injected_heat += Nsources*energy_per_source;
-	}
+        {
+          inject_energy( periodic, Nsources, Sources, energy_per_source, S, planes[current] );
+          injected_heat += Nsources*energy_per_source;
+        }
                   
       /* update grid points */
       update_plane(periodic, S, planes[current], planes[!current] );
 
       if ( output_energy_at_steps )
-	{
-	  double system_heat;
-	  get_total_energy( S, planes[!current], &system_heat);
-            
-	  printf("step %d :: injected energy is %g, updated system energy is %g\n", iter, 
-		 injected_heat, system_heat );
+        {
+          double system_heat;
+          get_total_energy( S, planes[!current], &system_heat);
+                  
+          printf("step %d :: injected energy is %g, updated system energy is %g\n", iter, 
+          injected_heat, system_heat );
 
-	  char filename[100];
-	  sprintf( filename, "plane_%05d.bin", iter );
-	  dump( planes[!current], S, filename, NULL, NULL );
-	    
-	}
+          char filename[100];
+          sprintf( filename, "plane_%05d.bin", iter );
+          dump( planes[!current], S, filename, NULL, NULL );
+            
+        }
 
       /* swap planes for the new iteration */
       current = !current;
       
     }
   
-  
   /* get final heat in the system */
-  
   double system_heat;
   get_total_energy( S, planes[current], &system_heat);
 
@@ -81,17 +73,17 @@ int main(int argc, char **argv)
 
 // ------------------------------------------------------------------
 
-int initialize (  int		    argc,                   // the argc from command line
-		              char   	  **argv,                	// the argv from command line
-                  int     	*S,                   	// two-uint array defining the x,y dimensions of the grid
-                  int     	*periodic,            	// periodic-boundary tag
-                  int     	*Niterations,         	// how many iterations
-                  int     	*Nsources,            	// how many heat sources
-                  int    	  **Sources,              // the heat sources
-                  double  	*energy_per_source,   	// how much heat per source
-                  double 	  **planes,             	// the two planes
-                  int     	*output_energy_at_steps,// whether to output the energy at every step
-                  int     	*injection_frequency    // how often to inject energy
+int initialize (  int		    argc,                   
+		              char   	  **argv,                	
+                  int     	*S,                   	
+                  int     	*periodic,            	
+                  int     	*Niterations,         	
+                  int     	*Nsources,            	
+                  int    	  **Sources,              
+                  double  	*energy_per_source,   	
+                  double 	  **planes,             	
+                  int     	*output_energy_at_steps,
+                  int     	*injection_frequency    
 		            )
 {
   int ret;  // return value
@@ -108,7 +100,7 @@ int initialize (  int		    argc,                   // the argc from command line
   *energy_per_source = 1.0;
   *injection_frequency = *Niterations;
 
-  double freq = 0;
+  double freq = 0; 
   
   // ··································································
   // process the commadn line
@@ -170,16 +162,15 @@ int initialize (  int		    argc,                   // the argc from command line
   }
 
   if ( freq == 0 )
-    *injection_frequency = 1;
+    *injection_frequency = *Niterations;
   else
     {
-      freq = (freq > 1.0 ? 1.0 : freq );
-      *injection_frequency = freq * *Niterations;
+      *injection_frequency = *Niterations / (int)freq;
     }
 
   // ··································································
   /*
-   * here we should check for all the parms being meaningful
+   * we should check for all the parms being meaningful
    *
    */
 
@@ -272,7 +263,7 @@ int update_plane (const int     periodic,
                 double result = old[ IDX(i,j) ] *alpha;
                 double sum_i  = (old[IDX(i-1, j)] + old[IDX(i+1, j)]) / 4.0 * (1-alpha);
                 double sum_j  = (old[IDX(i, j-1)] + old[IDX(i, j+1)]) / 4.0 * (1-alpha);
-                result += (sum_i + sum_j );
+                result += (sum_i + sum_j);
                 
 
                 /*

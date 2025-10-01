@@ -32,7 +32,7 @@
 
 typedef unsigned int uint;
 
-typedef uint    vec2_t[2];
+typedef uint    vec2_t[2]; 
 typedef double *restrict buffers_t[4];
 
 typedef struct {

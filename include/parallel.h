@@ -6,6 +6,8 @@
 #include <time.h>
 #include <float.h>
 #include <math.h>
+#include <omp.h>
+#include <mpi.h>
 
 
 #define NORTH 0
@@ -22,38 +24,55 @@
 #define _x_ 0
 #define _y_ 1
 
-#define uint unsigned int 
+typedef uint    vec2_t[2]; // for (x,y) coordinates
+typedef double *restrict buffers_t[4]; // for MPI communication buffers (NORTH, SOUTH, EAST, WEST)
+
+typedef struct {
+    double   * restrict data;
+    vec2_t     size;
+} plane_t; // for the 2D grid (with ghost cells)
 
 // ============================================================
 
-int initialize (    int         argc,			        // argc from cmd line
-		            char	    **argv,			        // argv from cmd line
-		            int	        *S,			            // two-uint array defining x,y dims of grid
-		            int	        *periodic,		        // boolean flag for boundary conditions - if 1, 
-                                                        // the plate behaves as infinite with periodic 
-                                                        // boundaries; if 0, fixed boundaries
-		            int 	    *Niterations,		    // n. iterations
-		            int   	    *Nsources,		        // n. heat sources randomly placed on the grid 
-                                                        // (default = 1)
-		            int  	    **Sources,              // 2D array storing heat source positions;
-                                                        // sources[2*i] and Sources[2*i+1] are x,y 
-                                                        // coordinates of source i
-		            double      *energy_per_source,	    // amount of energy each heat source injects 
-                                                        // per injection event
-		            double      **planes,		        // two 2D arrays for double-buffering;
-                                                        // one holds current heat values, the other 
-                                                        // stores updated values (swapped each iteration)
-                    int   	    *output_energy_at_steps,// debug flag - if 1, prints energy statistics 
+// TODO
+int initialize (    MPI_Comm *Comm,
+                    int       *Me,                   // my rank
+                    int       *Ntasks,               // total number of MPI ranks
+                    int         argc,			        // argc from cmd line
+                    char	    **argv,			        // argv from cmd line
+                    vec2_t	    *S,			            // two-uint array defining x,y dims of grid
+                    vec2_t   *N,                     // two-uint array defining the MPI tasks' grid
+                    int	        *periodic,		        // boolean flag for boundary conditions - if 1, 
+                                                            // the plate behaves as infinite with periodic 
+                                                            // boundaries; if 0, fixed boundaries
+                    int       *output_energy_stat,   // debug flag - if 1, prints energy statistics 
                                                         // and dumps grid data at each time step
-                    int   	    *injection_frequency    // how often to inject energy
+                    int       *neighbours,           // four-int array that gives back the neighbours of the calling task 
+                    int 	    *Niterations,		    // n. iterations
+                    int   	    *Nsources,		        // n. heat sources randomly placed on the grid 
+                                                            // (default = 1)
+                    int   	    *Nsources_local,       // n. heat sources for this MPI task
+                    vec2_t  	    **Sources_local,              // 2D array storing heat source positions;
+                                                            // sources[2*i] and Sources[2*i+1] are x,y 
+                                                            // coordinates of source i
+                    double      *energy_per_source,	    // amount of energy each heat source injects 
+                                                            // per injection event
+                    plane_t      *planes,		        // two planes: planes[OLD] contains the current data,
+                                                            // planes[NEW] will contain the updated data
+                                                            // the two planes swap their roles at every iteration
+                    buffers_t    *buffers,            // communication buffers for the four directions
+                    //int   	    *output_energy_at_steps,// debug flag - if 1, prints energy statistics 
+                                                        // and dumps grid data at each time step
+                    //int   	    *injection_frequency    // how often to inject energy
 		        );  
 
-int update_plane (const int     periodic, 
-                  const int     size[2],
-			      const double  *old,
-                  double        *new
+int update_plane (const int       periodic, 
+                  const vec2_t     N,
+			            const plane_t   *old,
+                        plane_t   *new
                 );   
 
+// TODO
 int dump (          const double  *data, 
                     const uint    size[2], 
                     const char    *filename, 
@@ -64,21 +83,53 @@ int dump (          const double  *data,
 
 // ============================================================
 
-static inline int memory_allocate ( const int       size[2],
-		                            double	        **planes_ptr
+static inline int memory_allocate ( const int       *neighbours,
+		                                const vec2_t    N,
+		                                buffers_t       *buffers_ptr,
+		                                plane_t         *planes_ptr
                                 )
 /*
- * allocate the memory for the planes
- * we need 2 planes: the first contains the
- * current data, the second the updated data
- *
- * in the integration loop then the roles are
- * swapped at every iteration
- *
- */
+  here you allocate the memory buffers that you need to
+  (i)  hold the results of your computation
+  (ii) communicate with your neighbours
+
+  The memory layout that I propose to you is as follows:
+
+  (i) --- calculations
+  you need 2 memory regions: the "OLD" one that contains the
+  results for the step (i-1)th, and the "NEW" one that will contain
+  the updated results from the step ith.
+
+  Then, the "NEW" will be treated as "OLD" and viceversa.
+
+  These two memory regions are indexed by *plane_ptr:
+
+  plane_ptr[0] ==> the "OLD" region
+  plane_ptr[1] ==> the "NEW" region
+
+
+  (ii) --- communications
+
+  you may need two buffers (one for sending and one for receiving)
+  for each one of your neighbours, that are at most 4:
+  north, south, east and west.
+
+  To them you need to communicate at most mysizex or mysizey
+  double data.
+
+  These buffers are indexed by the buffer_ptr pointer so
+  that
+
+  (*buffers_ptr)[SEND][ {NORTH,...,WEST} ] = .. some memory regions
+  (*buffers_ptr)[RECV][ {NORTH,...,WEST} ] = .. some memory regions
+  
+  --->> Of course you can change this layout as you prefer
+  */
 {
   if (planes_ptr == NULL )  
     return 1;
+  if (buffers_ptr == NULL )
+    return 2;
 
   /*
   use +2 for ghost cells:
@@ -89,45 +140,113 @@ static inline int memory_allocate ( const int       size[2],
                   G x x x x G
                   G G G G G G
   */ 
-  unsigned int bytes = (size[_x_]+2)*(size[_y_]+2);
+  unsigned int frame_size = (planes_ptr[OLD].size[_x_]+2) * (planes_ptr[OLD].size[_y_]+2);
 
   /*
   planes_ptr ──→ [planes_ptr[OLD]] ──→ [allocated memory for OLD plane]
                  [planes_ptr[NEW]] ──→ [allocated memory for NEW plane]
   */
-  planes_ptr[OLD] = (double*)calloc( 2*bytes, sizeof(double));  // Allocate one big block using calloc 
-                                                                // such that values are initialized to 0
-  planes_ptr[NEW] = planes_ptr[OLD] + bytes; // points to second half
-      
+  planes_ptr[OLD].data = (double*)calloc( frame_size, sizeof(double));  // Allocate one big block using calloc
+                                                                        // such that values are initialized to 0
+  if ( planes_ptr[OLD].data == NULL )
+    return 3;
+
+  planes_ptr[NEW].data = planes_ptr[OLD].data + frame_size; // points to second half
+  if ( planes_ptr[NEW].data == NULL )
+    return 4;
+
+  // ··················································
+  // buffers for north and south communication 
+  // are not really needed
+  //
+  // in fact, they are already contiguous, just the
+  // first and last line of every rank's plane
+  //
+  // you may just make some pointers pointing to the
+  // correct positions
+  //
+
+  // or, if you preer, just go on and allocate buffers
+  // also for north and south communications
+
+  // ··················································
+  // allocate buffers
+  //
+
+  for ( int dir = 0; dir < 4; dir++ )
+    {
+      if ( neighbours[dir] != MPI_PROC_NULL )
+        {
+          unsigned int bufsize = (dir < 2? planes_ptr[OLD].size[_x_] : planes_ptr[OLD].size[_y_]);
+          
+          // send buffer
+          (*buffers_ptr)[SEND][dir] = (double*)malloc( bufsize * sizeof(double) );
+          if ( (*buffers_ptr)[SEND][dir] == NULL )
+            return 5;
+          
+          // recv buffer
+          (*buffers_ptr)[RECV][dir] = (double*)malloc( bufsize * sizeof(double) );
+          if ( (*buffers_ptr)[RECV][dir] == NULL )
+            return 6;
+        }
+      else
+        {
+          (*buffers_ptr)[SEND][dir] = NULL;
+          (*buffers_ptr)[RECV][dir] = NULL;          
+        }
+    }
+
+  // ··················································
   return 0;
 }
 
-static inline int initialize_sources(   uint        size[2],
-			                            int    	    Nsources,
-			                            int  	    **Sources
+static inline int initialize_sources(   int     Me,
+                                        int     Ntasks,
+                                        MPI_    Comm *Comm,
+                                        vec2_t  size[2],
+			                                  int    	Nsources,
+                                        int     Nsources_local,
+			                                  vec2_t  **Sources
                                     )
-/*
- * randomly spread heat suources
- * NEED ENHANCEMENT FOR PARALLELISM (also lrand48)
- */
 {
-  // Sources ──→ [*Sources] ──→ [sources array memory]
-  *Sources = (int*)malloc( Nsources * 2 *sizeof(uint) );
-  for ( int s = 0; s < Nsources; s++ )
+  srand48(time(NULL) ^ Me);
+  int *tasks_with_sources = (int*)malloc( Nsources * sizeof(int) );
+  
+  if ( Me == 0 )
     {
-      (*Sources)[s*2] = 1+ lrand48() % size[_x_]; // coordinate in range [1, size]
-      (*Sources)[s*2+1] = 1+ lrand48() % size[_y_]; // coordinate in range [1, size]
+      for ( int i = 0; i < Nsources; i++ )
+	      tasks_with_sources[i] = (int)lrand48() % Ntasks;
     }
+  
+  MPI_Bcast( tasks_with_sources, Nsources, MPI_INT, 0, *Comm );
+
+  int nlocal = 0;
+  for ( int i = 0; i < Nsources; i++ )
+    nlocal += (tasks_with_sources[i] == Me);
+  *Nsources_local = nlocal;
+  
+  if ( nlocal > 0 )
+    {
+      vec2_t * restrict helper = (vec2_t*)malloc( nlocal * sizeof(vec2_t) );      
+      for ( int s = 0; s < nlocal; s++ )
+        {
+          helper[s][_x_] = 1 + lrand48() % mysize[_x_];
+          helper[s][_y_] = 1 + lrand48() % mysize[_y_];
+        }
+      *Sources = helper;
+    }
+  
+  free( tasks_with_sources );
 
   return 0;
 }
 
 static inline int inject_energy (   const int       periodic,
                                     const int       Nsources,
-			                        const int       *Sources,
+			                        const vec2_t   *Sources,
 			                        const double    energy,
-			                        const int       mysize[2],
-                                    double          *plane 
+			                        const vec2_t       N,
+                                    plane_t      *plane 
                                 )
 /*
 Periodic function to inject energy into the grid at the positions specified in Sources array.
@@ -142,40 +261,83 @@ Grid with periodic boundaries and source at (1,3):
 [G][G][G][G][G]
 */
 {
-   #define IDX( i, j ) ( (j)*(mysize[_x_]+2) + (i) )    // replaced at compile time
-                                                        // IDX is a macro that converts 
-                                                        // 2D coordinates (i, j) into a
-                                                        // 1D array index for row-major
-                                                        // storage.
-    for (int s = 0; s < Nsources; s++) {
-        
-        int x = Sources[2*s];
-        int y = Sources[2*s+1];
-        plane[IDX(x, y)] += energy;
-        
-        // handle periodic boundaries
-        // - inner cells -> [1, mysize[_x_]] x [1, mysize[_y_]]
-        // - ghost cells -> [0, mysize[_x_]+1] x [0, mysize[_y_]+1]
-        if ( periodic )
-            {
-                if ( x == 1 )
-                    plane[IDX(mysize[_x_]+1, y)] += energy; // wrap around left edge to right edge
-                if ( x == mysize[_x_] )
-                    plane[IDX(0, y)] += energy; // wrap around right edge to left edge
-                if ( y == 1 )
-                    plane[IDX(x, mysize[_y_]+1)] += energy; // wrap around bottom edge to top edge
-                if ( y == mysize[_y_] )
-                    plane[IDX(x, 0)] += energy; // wrap around top edge to bottom edge
-            }
-    }
-   #undef IDX
-    
-    return 0;
+  const uint register sizex = plane->size[_x_]+2;
+  double * restrict data = plane->data;
+  #define IDX( i, j ) ( (j)*(mysize[_x_]+2) + (i) )    // replaced at compile time
+                                                      // IDX is a macro that converts 
+                                                      // 2D coordinates (i, j) into a
+                                                      // 1D array index for row-major
+                                                      // storage.
+  for (int s = 0; s < Nsources; s++) {
+      
+      int x = Sources[2*s];
+      int y = Sources[2*s+1];
+      plane[IDX(x, y)] += energy;
+      
+      // handle periodic boundaries
+      // - inner cells -> [1, mysize[_x_]] x [1, mysize[_y_]]
+      // - ghost cells -> [0, mysize[_x_]+1] x [0, mysize[_y_]+1]
+      if ( periodic )
+          {
+              if ( x == 1 )
+                  plane[IDX(mysize[_x_]+1, y)] += energy; // wrap around left edge to right edge
+              if ( x == mysize[_x_] )
+                  plane[IDX(0, y)] += energy; // wrap around right edge to left edge
+              if ( y == 1 )
+                  plane[IDX(x, mysize[_y_]+1)] += energy; // wrap around bottom edge to top edge
+              if ( y == mysize[_y_] )
+                  plane[IDX(x, 0)] += energy; // wrap around top edge to bottom edge
+          }
+  }
+  #undef IDX
+  
+  return 0;
 }
  
-static inline int get_total_energy( const int       size[2],
-                                    const double    *plane,
-                                    double          *energy
+static inline uint simple_factorization(  uint A,
+                                          int *Nfactors, 
+                                          uint **factors )
+/*
+ * rought factorization;
+ * assumes that A is small, of the order of <~ 10^5 max,
+ * since it represents the number of tasks
+ #
+ */
+{
+  int N = 0;
+  int f = 2;
+  uint _A_ = A;
+
+  while ( f < A )
+    {
+      while( _A_ % f == 0 ) {
+	N++;
+	_A_ /= f; }
+
+      f++;
+    }
+
+  *Nfactors = N;
+  uint *_factors_ = (uint*)malloc( N * sizeof(uint) );
+
+  N   = 0;
+  f   = 2;
+  _A_ = A;
+
+  while ( f < A )
+    {
+      while( _A_ % f == 0 ) {
+	_factors_[N++] = f;
+	_A_ /= f; }
+      f++;
+    }
+
+  *factors = _factors_;
+  return 0;
+}
+
+static inline int get_total_energy( plane_t *plane,
+                                    double  *energy
                                 )
 /*
  * NOTE: this routine a good candiadate for openmp
@@ -183,9 +345,13 @@ static inline int get_total_energy( const int       size[2],
  */
 {
 
-    const int register xsize = size[_x_];
+    const int register xsize = plane->size[_x_];
+    const int register ysize = plane->size[_y_];
+    const int register fsize = xsize+2;
+
+    double * restrict data = plane->data;
     
-   #define IDX( i, j ) ( (j)*(xsize+2) + (i) )
+   #define IDX( i, j ) ( (j)*fsize + (i) )
 
    #if defined(LONG_ACCURACY)    
     long double totenergy = 0;
@@ -198,9 +364,10 @@ static inline int get_total_energy( const int       size[2],
     //       (ii) ask the compiler to do it
     // for instance
     // #pragma GCC unroll 4
-    for ( int j = 1; j <= size[_y_]; j++ )
-        for ( int i = 1; i <= size[_x_]; i++ )
-            totenergy += plane[ IDX(i, j) ];
+    for ( int j = 1; j <= ysize; j++ )
+        for ( int i = 1; i <= xsize; i++ )
+            totenergy += data[ IDX(i, j) ];
+
     
    #undef IDX
 
@@ -208,18 +375,45 @@ static inline int get_total_energy( const int       size[2],
     return 0;
 }
                             
-static inline int memory_release (  double *data, 
-                                    int *sources
-                                )
-  
+static inline int output_energy_stat (  int step, 
+                          plane_t *plane, 
+                          double budget, 
+                          int Me, 
+                          MPI_Comm *Comm )
 {
-  if( data != NULL )
-    free( data );
+
+  double system_energy = 0;
+  double tot_system_energy = 0;
+  get_total_energy ( plane, &system_energy );
+  
+  MPI_Reduce ( &system_energy, &tot_system_energy, 1, MPI_DOUBLE, MPI_SUM, 0, *Comm );
+  
+  if ( Me == 0 )
+    {
+      if ( step >= 0 )
+	printf(" [ step %4d ] ", step ); fflush(stdout);
+
+      
+      printf( "total injected energy is %g, "
+	      "system energy is %g "
+	      "( in avg %g per grid point)\n",
+	      budget,
+	      tot_system_energy,
+	      tot_system_energy / (plane->size[_x_]*plane->size[_y_]) );
+    }
+  
+  return 0;
+}
+
+static inline int memory_release (  plane_t   *planes, 
+                                    vec2_t   *sources
+                                )
+{
+  if( planes != NULL )
+    free( planes->data );
 
   if( sources != NULL )
     free( sources );
 
-  
-  
   return 0;
 }

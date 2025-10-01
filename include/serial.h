@@ -27,20 +27,20 @@
 // ============================================================
 
 int initialize (    int         argc,			        // argc from cmd line
-		            char	    **argv,			        // argv from cmd line
-		            int	        *S,			            // two-uint array defining x,y dims of grid
-		            int	        *periodic,		        // boolean flag for boundary conditions - if 1, 
-                                                        // the plate behaves as infinite with periodic 
-                                                        // boundaries; if 0, fixed boundaries
-		            int 	    *Niterations,		    // n. iterations
-		            int   	    *Nsources,		        // n. heat sources randomly placed on the grid 
-                                                        // (default = 1)
-		            int  	    **Sources,              // 2D array storing heat source positions;
-                                                        // sources[2*i] and Sources[2*i+1] are x,y 
-                                                        // coordinates of source i
-		            double      *energy_per_source,	    // amount of energy each heat source injects 
-                                                        // per injection event
-		            double      **planes,		        // two 2D arrays for double-buffering;
+                    char	    **argv,			        // argv from cmd line
+                    int	        *S,			            // two-uint array defining x,y dims of grid
+                    int	        *periodic,		        // boolean flag for boundary conditions - if 1, 
+                                                            // the plate behaves as infinite with periodic 
+                                                            // boundaries; if 0, fixed boundaries
+                    int 	    *Niterations,		    // n. iterations
+                    int   	    *Nsources,		        // n. heat sources randomly placed on the grid 
+                                                            // (default = 1)
+                    int  	    **Sources,              // 2D array storing heat source positions;
+                                                            // sources[2*i] and Sources[2*i+1] are x,y 
+                                                            // coordinates of source i
+                    double      *energy_per_source,	    // amount of energy each heat source injects 
+                                                            // per injection event
+                    double      **planes,		        // two 2D arrays for double-buffering;
                                                         // one holds current heat values, the other 
                                                         // stores updated values (swapped each iteration)
                     int   	    *output_energy_at_steps,// debug flag - if 1, prints energy statistics 

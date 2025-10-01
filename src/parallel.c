@@ -1,11 +1,27 @@
 #include "serial.h"
 
-#define uint unsigned int
-
 // ------------------------------------------------------------------
 
 int main(int argc, char **argv)
 {
+  /* MPI Init */
+  int Rank, Nprocs;
+  int mpi_provided_thread_level;
+  MPI_Comm STENCIL_WORLD;
+
+  MPI_Init_thread(&argc, &argv, MPI_THREAD_SINGLE, &mpi_provided_thread_level); // !!! to be set for multithreading for Leonardo
+  if (provided < MPI_THREAD_SINGLE) {
+    printf("Aborting...")
+    MPI_Abort(STENCIL_WORLD, 1)
+  }
+  
+  MPI_Comm_dup(MPI_COMM_WORLD, &STENCIL_WORLD); // separate context
+
+  MPI_Comm_rank(MPI_COMM_WORLD, &Rank);
+  MPI_Comm_size(MPI_COMM_WORLD, &Nprocs);
+
+  MPI_Barrier(STENCIL_WORLD);
+
   /* init */
   int  Niterations;
   int  periodic;
@@ -68,22 +84,32 @@ int main(int argc, char **argv)
 	 injected_heat, system_heat );
   
   memory_release( planes[OLD], Sources );
+
+  MPI_Finalize();
   return 0;
 }
 
 // ------------------------------------------------------------------
 
-int initialize (  int		    argc,                   
+int initialize (  MPI_Comm  *Comm,
+                  int       *Me,
+                  int       *Ntasks,
+                  int		    argc,                   
 		              char   	  **argv,                	
-                  int     	*S,                   	
-                  int     	*periodic,            	
+                  vec2_t    *S,                   
+                  vec2_t    *N,	
+                  int     	*periodic,   
+                  int       *output_energy_stat,  
+                  int       *neighbours,       	
                   int     	*Niterations,         	
-                  int     	*Nsources,            	
-                  int    	  **Sources,              
+                  int     	*Nsources,   
+                  int       *Nsources_local         	
+                  vec2_t 	  **Sources_local,              
                   double  	*energy_per_source,   	
-                  double 	  **planes,             	
-                  int     	*output_energy_at_steps,
-                  int     	*injection_frequency    
+                  plane_t 	*planes,          
+                  buffers_t *buffers,   	
+                  //int     	*output_energy_at_steps,
+                  //int     	*injection_frequency    
 		            )
 {
   int ret;  // return value
@@ -217,9 +243,9 @@ int initialize (  int		    argc,
 }
 
 int update_plane (const int     periodic, 
-                  const int     size[2],
-			            const double  *old,
-                  double        *new
+                  const vec2_t  N,
+			            const plane_t *old,
+                        plane_t *new
                   )
 /*
  * calculate the new energy values
@@ -231,97 +257,64 @@ int update_plane (const int     periodic,
  *
  */
 {
-    const int register fxsize = size[_x_]+2;
-    const int register fysize = size[_y_]+2;
-    const int register xsize = size[_x_];
-    const int register ysize = size[_y_];
+  uint register fxsize = oldplane->size[_x_]+2;
+  uint register fysize = oldplane->size[_y_]+2;
+  
+  uint register xsize = oldplane->size[_x_];
+  uint register ysize = oldplane->size[_y_];
     
-   #define IDX( i, j ) ( (j)*fxsize + (i) )
+  #define IDX( i, j ) ( (j)*fxsize + (i) )
+  
+  // HINT: you may attempt to
+  //       (i)  manually unroll the loop
+  //       (ii) ask the compiler to do it
+  // for instance
+  // #pragma GCC unroll 4
+  //
+  // HINT: in any case, this loop is a good candidate
+  //       for openmp parallelization
 
-    // HINT: you may attempt to
-    //       (i)  manually unroll the loop
-    //       (ii) ask the compiler to do it
-    // for instance
-    // #pragma GCC unroll 4
-    //
-    // HINT: in any case, this loop is a good candidate
-    //       for openmp parallelization
-    for (int j = 1; j <= ysize; j++)
-        for ( int i = 1; i <= xsize; i++)
-            {
-                //
-                // five-points stencil formula
-                //
+  double * restrict old = oldplane->data;
+  double * restrict new = newplane->data;
+  
+  for (uint j = 1; j <= ysize; j++)
+      for ( uint i = 1; i <= xsize; i++)
+          {
+              
+              // NOTE: (i-1,j), (i+1,j), (i,j-1) and (i,j+1) always exist even
+              //       if this patch is at some border without periodic conditions;
+              //       in that case it is assumed that the +-1 points are outside the
+              //       plate and always have a value of 0, i.e. they are an
+              //       "infinite sink" of heat
+              
+              // five-points stencil formula
+              //
+              // HINT : check the serial version for some optimization
+              //
+              new[ IDX(i,j) ] =
+                  old[ IDX(i,j) ] / 2.0 + ( old[IDX(i-1, j)] + old[IDX(i+1, j)] +
+                                            old[IDX(i, j-1)] + old[IDX(i, j+1)] ) /4.0 / 2.0;
+              
+          }
 
-                
-                // simpler stencil with no explicit diffusivity
-                // always conserve the smoohed quantity
-                // alpha here mimics how much "easily" the heat
-                // travels
-                
-                double alpha = 0.6;
-                double result = old[ IDX(i,j) ] *alpha;
-                double sum_i  = (old[IDX(i-1, j)] + old[IDX(i+1, j)]) / 4.0 * (1-alpha);
-                double sum_j  = (old[IDX(i, j-1)] + old[IDX(i, j+1)]) / 4.0 * (1-alpha);
-                result += (sum_i + sum_j);
-                
+  if ( periodic )
+      {
+          if ( N[_x_] == 1 )
+              {
+                  // propagate the boundaries as needed
+                  // check the serial version
+              }
 
-                /*
+          if ( N[_y_] == 1 ) 
+              {
+                  // propagate the boundaries as needed
+                  // check the serial version
+              }
+      }
 
-                  // implentation from the derivation of
-                  // 3-points 2nd order derivatives
-                  // however, that should depends on an adaptive
-                  // time-stepping so that given a diffusivity
-                  // coefficient the amount of energy diffused is
-                  // "small"
-                  // however the imlic methods are not stable
-                  
-               #define alpha_guess 0.5     // mimic the heat diffusivity
-
-                double alpha = alpha_guess;
-                double sum = old[IDX(i,j)];
-                
-                int   done = 0;
-                do
-                    {                
-                        double sum_i = alpha * (old[IDX(i-1, j)] + old[IDX(i+1, j)] - 2*sum);
-                        double sum_j = alpha * (old[IDX(i, j-1)] + old[IDX(i, j+1)] - 2*sum);
-                        result = sum + ( sum_i + sum_j);
-                        double ratio = fabs((result-sum)/(sum!=0? sum : 1.0));
-                        done = ( (ratio < 2.0) && (result >= 0) );    // not too fast diffusion and
-                                                                     // not so fast that the (i,j)
-                                                                     // goes below zero energy
-                        alpha /= 2;
-                    }
-                while ( !done );
-                */
-
-                new[ IDX(i,j) ] = result;
-                
-            }
-
-    if ( periodic )
-        /*
-         * propagate boundaries if they are periodic
-         *
-         * NOTE: when is that needed in distributed memory, if any?
-         */
-        {
-            for ( int i = 1; i <= xsize; i++ )
-                {
-                    new[ i ] = new[ IDX(i, ysize) ];
-                    new[ IDX(i, ysize+1) ] = new[ i ];
-                }
-            for ( int j = 1; j <= ysize; j++ )
-                {
-                    new[ IDX( 0, j) ] = new[ IDX(xsize, j) ];
-                    new[ IDX( xsize+1, j) ] = new[ IDX(1, j) ];
-                }
-        }
-    
-    return 0;
-
-   #undef IDX
+  
+  #undef IDX
+  return 0;
 }
 
 int dump (        const double  *data, 

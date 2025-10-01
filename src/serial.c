@@ -1,7 +1,5 @@
 #include "serial.h"
 
-#define uint unsigned int
-
 // ------------------------------------------------------------------
 
 int main(int argc, char **argv)
@@ -68,6 +66,8 @@ int main(int argc, char **argv)
 	 injected_heat, system_heat );
   
   memory_release( planes[OLD], Sources );
+
+  MPI_Finalize();
   return 0;
 }
 

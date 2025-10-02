@@ -1,3 +1,5 @@
 serial
 parallel
 bin/*
+*.DS_Store
+*.swp

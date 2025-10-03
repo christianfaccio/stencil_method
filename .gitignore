@@ -3,3 +3,4 @@ parallel
 bin/*
 *.DS_Store
 *.swp
+.vscode/*

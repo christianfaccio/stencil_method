@@ -24,6 +24,8 @@
 #define _x_ 	0
 #define _y_ 	1
 
+#define IDX(i,j) ((j)*fsize*(i))
+
 typedef uint    vec2_t[2]; 		// for (x,y) coordinates
 typedef double 	*restrict buffers_t[4]; // for MPI communication buffers (NORTH, SOUTH, EAST, WEST)
 
@@ -70,15 +72,6 @@ int update_plane (	const int       periodic,
 			const plane_t   *oldplane,
                         plane_t   	*newplane
                	);   
-
-// TODO
-int dump (          	const double  *data, 
-                    	const uint    size[2], 
-                    	const char    *filename, 
-                    	double        *min, 
-                    	double        *max
-        );
-
 
 // ============================================================
 
@@ -249,34 +242,36 @@ Grid with periodic boundaries and source at (1,3):
 {
   const uint register sizex = N[_x_]+2;
   double *restrict data = plane->data;
-  #define IDX( i, j ) ( (j)*(sizex) + (i) )   	// replaced at compile time
-                                                // IDX is a macro that converts 
-                                                // 2D coordinates (i, j) into a
-                                                // 1D array index for row-major
-                                                // storage.
-  for (int s = 0; s < Nsources; s++) {
+  
+  if (periodic)
+  { 
+	  for (int s = 0; s < Nsources; s++) {
 
+	      int x = Sources[s][_x_];
+	      int y = Sources[s][_y_];
+	      data[IDX(x, y)] += energy;
+	      
+	      // handle periodic boundaries
+	      // - inner cells -> [1, N[_x_]] x [1, N[_y_]]
+	      // - ghost cells -> [0, N[_x_]+1] x [0, N[_y_]+1]
+	      if ( x == 1 )
+		  data[IDX(N[_x_]+1, y)] += energy; // wrap around left edge to right edge
+	      if ( x == N[_x_] )
+		  data[IDX(0, y)] += energy; // wrap around right edge to left edge
+	      if ( y == 1 )
+		  data[IDX(x, N[_y_]+1)] += energy; // wrap around bottom edge to top edge
+	      if ( y == N[_y_] )
+		  data[IDX(x, 0)] += energy; // wrap around top edge to bottom edge
+	  }
+  }
+
+  for (int s = 0; s < Nsources; s++) 
+  {
       int x = Sources[s][_x_];
       int y = Sources[s][_y_];
       data[IDX(x, y)] += energy;
-      
-      // handle periodic boundaries
-      // - inner cells -> [1, N[_x_]] x [1, N[_y_]]
-      // - ghost cells -> [0, N[_x_]+1] x [0, N[_y_]+1]
-      if ( periodic )
-          {
-              if ( x == 1 )
-                  data[IDX(N[_x_]+1, y)] += energy; // wrap around left edge to right edge
-              if ( x == N[_x_] )
-                  data[IDX(0, y)] += energy; // wrap around right edge to left edge
-              if ( y == 1 )
-                  data[IDX(x, N[_y_]+1)] += energy; // wrap around bottom edge to top edge
-              if ( y == N[_y_] )
-                  data[IDX(x, 0)] += energy; // wrap around top edge to bottom edge
-          }
   }
-  #undef IDX
-  
+
   return 0;
 }
  
@@ -329,40 +324,27 @@ static inline uint simple_factorization(  uint A,
 static inline int get_total_energy( plane_t *plane,
                                     double  *energy
                                 )
-/*
- * NOTE: this routine a good candiadate for openmp
- *       parallelization
- */
-{
+{	
+    	const int register xsize = plane->size[_x_];
+    	const int register ysize = plane->size[_y_];
+    	const int register fsize = xsize+2;
 
-    const int register xsize = plane->size[_x_];
-    const int register ysize = plane->size[_y_];
-    const int register fsize = xsize+2;
+    	double * restrict data = plane->data;
+    	
+   	#if defined(LONG_ACCURACY)    
+    	long double totenergy = 0;
+   	#else
+    	double totenergy = 0;    
+   	#endif
 
-    double * restrict data = plane->data;
-    
-   #define IDX( i, j ) ( (j)*fsize + (i) )
+	#pragma omp parallel for schedule(static) reduction(+:totenergy)
+	for ( int j = 1; j <= ysize; j++ )
+		#pragma GCC unroll 4
+		for ( int i = 1; i <= xsize; i++ )
+			totenergy += data[ IDX(i, j) ];
 
-   #if defined(LONG_ACCURACY)    
-    long double totenergy = 0;
-   #else
-    double totenergy = 0;    
-   #endif
-
-    // HINT: you may attempt to
-    //       (i)  manually unroll the loop
-    //       (ii) ask the compiler to do it
-    // for instance
-    // #pragma GCC unroll 4
-    for ( int j = 1; j <= ysize; j++ )
-        for ( int i = 1; i <= xsize; i++ )
-            totenergy += data[ IDX(i, j) ];
-
-    
-   #undef IDX
-
-    *energy = (double)totenergy;
-    return 0;
+	*energy = (double)totenergy;
+	return 0;
 }
                             
 static inline int output_energy_stat (  int 		step, 

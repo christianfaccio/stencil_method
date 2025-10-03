@@ -62,8 +62,6 @@ int main(int argc, char **argv)
       uint sizey = planes[current].size[_y_];
       uint fsize = sizex + 2;  // frame size including ghost cells
 
-      #define IDX(i, j) ((j) * fsize + (i))
-
       // NORTH: send first row (j=1)
       if (neighbours[NORTH] != MPI_PROC_NULL) {
           for (uint i = 0; i < sizex; i++)
@@ -88,8 +86,6 @@ int main(int argc, char **argv)
               buffers[SEND][WEST][j] = data[IDX(1, j+1)];
       }
 
-      #undef IDX
-
       // [B] perform the halo communications
       //     (1) use Send / Recv
       //     (2) use Isend / Irecv
@@ -112,8 +108,6 @@ int main(int argc, char **argv)
       MPI_Waitall(req_count, reqs, MPI_STATUSES_IGNORE);      
 
       // [C] copy the haloes data
-
-      #define IDX(i, j) ((j) * fsize + (i))
 
       // NORTH: copy received data to ghost row j=0
       if (neighbours[NORTH] != MPI_PROC_NULL) {
@@ -138,8 +132,6 @@ int main(int argc, char **argv)
           for (uint j = 0; j < sizey; j++)
               data[IDX(0, j+1)] = buffers[RECV][WEST][j];
       }
-
-      #undef IDX
 
       /* --------------------------------------  */
       /* update grid points */
@@ -490,8 +482,6 @@ int update_plane (	const int     	periodic,
   uint register xsize = oldplane->size[_x_];
   uint register ysize = oldplane->size[_y_];
 
-  #define IDX( i, j ) ( (j)*fxsize + (i) )
-
   // HINT: you may attempt to
   //       (i)  manually unroll the loop
   //       (ii) ask the compiler to do it
@@ -503,8 +493,9 @@ int update_plane (	const int     	periodic,
 
   double *restrict old_data = oldplane->data;
   double *restrict new_data = newplane->data;
-  
-  #pragma omp parallel for
+ 
+  #ifdef _OPENMP 
+  #pragma omp parallel for schedule(static) // OMP_PROC_BIND set at runtime (spread should be better)
   for (uint j = 1; j <= ysize; j++)
 	{
 	      #pragma GCC unroll 4
@@ -518,13 +509,12 @@ int update_plane (	const int     	periodic,
 		      //       "infinite sink" of heat
 
 		      // five-points stencil formula
-		      //
-		      // HINT : check the serial version for some optimization
-		      //
-		      new_data[ IDX(i,j) ] =
-			  old_data[ IDX(i,j) ] / 2.0 + ( old_data[IDX(i-1, j)] + old_data[IDX(i+1, j)] +
-						    old_data[IDX(i, j-1)] + old_data[IDX(i, j+1)] ) /4.0 / 2.0;
+		      double result = old_data[ IDX(i,j) ] * 0.5;
+		      double sum_i = (old_data[ IDX(i-1,j) ] + old_data[ IDX(i+1,j) ]) * 0.25;
+		      double sum_j = (old_data[ IDX(i,j+1) ] + old_data[ IDX(i,j-1) ]) * 0.25;
+		      result += (sum_i + sum_j);
 
+		      new[ IDX(i,j) ] = result;
 		  }
 	}
 
@@ -549,55 +539,7 @@ int update_plane (	const int     	periodic,
 	      }
       }
   
-  #undef IDX
   return 0;
 }
 
-int dump (        const double  *data, 
-                  const uint    size[2], 
-                  const char    *filename, 
-                  double        *min, 
-                  double        *max
-          )
-/* dump the data in a binary file, in single precision */
-{
-  if ( (filename != NULL) && (filename[0] != '\0') )
-    {
-      FILE *outfile = fopen( filename, "w" );
-      if ( outfile == NULL )
-	return 2;
-      
-      float *array = (float*)malloc( size[0] * sizeof(float) );
-      
-      double _min_ = DBL_MAX;
-      double _max_ = 0;
 
-      for ( int j = 0; j < size[1]; j++ )
-	{
-	  /*
-	  float y = (float)j / size[1];
-	  fwrite ( &y, sizeof(float), 1, outfile );
-	  */
-	  
-	  const double * restrict line = data + j*size[0];
-	  for ( int i = 0; i < size[0]; i++ ) {
-	    array[i] = (float)line[i];
-	    _min_ = ( line[i] < _min_? line[i] : _min_ );
-	    _max_ = ( line[i] > _max_? line[i] : _max_ ); }
-	  
-	  fwrite( array, sizeof(float), size[0], outfile );
-	}
-      
-      free( array );
-      
-      fclose( outfile );
-
-      if ( min != NULL )
-	*min = _min_;
-      if ( max != NULL )
-	*max = _max_;
-    }
-
-  else return 1;
-  
-}

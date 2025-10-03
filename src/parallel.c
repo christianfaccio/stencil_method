@@ -17,7 +17,7 @@ int main(int argc, char **argv)
 
   /* MPI Init */
   int Rank, Nprocs;
-  uint neighbours[4];
+  int neighbours[4];
   int mpi_provided_thread_level;
   MPI_Comm STENCIL_WORLD;
 
@@ -31,7 +31,7 @@ int main(int argc, char **argv)
 
   MPI_Comm_rank(STENCIL_WORLD, &Rank);
   MPI_Comm_size(STENCIL_WORLD, &Nprocs);
-   
+
   /* initial setting */
   int ret = initialize (  &STENCIL_WORLD, &Rank, &Nprocs, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,
                           neighbours, &Niterations,
@@ -43,10 +43,10 @@ int main(int argc, char **argv)
     MPI_Finalize();
     return 0;
   }
-  
+
   int current = OLD;
   double t0 = MPI_Wtime(); // for wall-clock time
-  
+
   /* main loop */
   for (int iter = 0; iter < Niterations; iter++)
     {
@@ -54,7 +54,7 @@ int main(int argc, char **argv)
       MPI_Request reqs[8]; // requests for non-blocking comms
 
       inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, N, &planes[current] );
-                  
+
       /* -------------------------------------- */
       // [A] fill the buffers
       double *data = planes[current].data;
@@ -476,11 +476,10 @@ int update_plane (	const int     	periodic,
  *
  */
 {
-  uint register fxsize = oldplane->size[_x_]+2;
-  uint register fysize = oldplane->size[_y_]+2;
+  register uint fsize = oldplane->size[_x_]+2;
 
-  uint register xsize = oldplane->size[_x_];
-  uint register ysize = oldplane->size[_y_];
+  register uint xsize = oldplane->size[_x_];
+  register uint ysize = oldplane->size[_y_];
 
   // HINT: you may attempt to
   //       (i)  manually unroll the loop
@@ -493,9 +492,11 @@ int update_plane (	const int     	periodic,
 
   double *restrict old_data = oldplane->data;
   double *restrict new_data = newplane->data;
- 
-  #ifdef _OPENMP 
-  #pragma omp parallel for schedule(static) // OMP_PROC_BIND set at runtime (spread should be better)
+  const double alpha = 0.25;
+
+  #ifdef _OPENMP
+  #pragma omp parallel for schedule(static) shared(old_data, new_data, fsize, xsize, ysize) firstprivate(alpha)
+  #endif
   for (uint j = 1; j <= ysize; j++)
 	{
 	      #pragma GCC unroll 4
@@ -509,12 +510,10 @@ int update_plane (	const int     	periodic,
 		      //       "infinite sink" of heat
 
 		      // five-points stencil formula
-		      double result = old_data[ IDX(i,j) ] * 0.5;
-		      double sum_i = (old_data[ IDX(i-1,j) ] + old_data[ IDX(i+1,j) ]) * 0.25;
-		      double sum_j = (old_data[ IDX(i,j+1) ] + old_data[ IDX(i,j-1) ]) * 0.25;
-		      result += (sum_i + sum_j);
+		      double result = old_data[IDX(i,j)] * (1.0 - 4*alpha);
+		      result += alpha * (old_data[IDX(i-1,j)] + old_data[IDX(i+1,j)] + old_data[IDX(i,j-1)] + old_data[IDX(i,j+1)]);
 
-		      new[ IDX(i,j) ] = result;
+		      new_data[ IDX(i,j) ] = result;
 		  }
 	}
 

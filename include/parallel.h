@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 600
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -24,8 +25,9 @@
 #define _x_ 	0
 #define _y_ 	1
 
-#define IDX(i,j) ((j)*fsize*(i))
+#define IDX(i,j) ((j)*fsize + (i))
 
+typedef unsigned int uint;
 typedef uint    vec2_t[2]; 		// for (x,y) coordinates
 typedef double 	*restrict buffers_t[4]; // for MPI communication buffers (NORTH, SOUTH, EAST, WEST)
 
@@ -240,7 +242,7 @@ Grid with periodic boundaries and source at (1,3):
 [G][G][G][G][G]
 */
 {
-  const uint register sizex = N[_x_]+2;
+  register const uint fsize = N[_x_]+2;
   double *restrict data = plane->data;
   
   if (periodic)
@@ -264,12 +266,14 @@ Grid with periodic boundaries and source at (1,3):
 		  data[IDX(x, 0)] += energy; // wrap around top edge to bottom edge
 	  }
   }
-
-  for (int s = 0; s < Nsources; s++) 
+  else
   {
-      int x = Sources[s][_x_];
-      int y = Sources[s][_y_];
-      data[IDX(x, y)] += energy;
+	  for (int s = 0; s < Nsources; s++) 
+	  {
+	      int x = Sources[s][_x_];
+	      int y = Sources[s][_y_];
+	      data[IDX(x, y)] += energy;
+	  }
   }
 
   return 0;
@@ -325,9 +329,9 @@ static inline int get_total_energy( plane_t *plane,
                                     double  *energy
                                 )
 {	
-    	const int register xsize = plane->size[_x_];
-    	const int register ysize = plane->size[_y_];
-    	const int register fsize = xsize+2;
+    	register const int xsize = plane->size[_x_];
+    	register const int ysize = plane->size[_y_];
+    	register const int fsize = xsize+2;
 
     	double * restrict data = plane->data;
     	
@@ -364,7 +368,8 @@ static inline int output_energy_stat (  int 		step,
   if ( Me == 0 )
     {
       if ( step >= 0 )
-	printf(" [ step %4d ] ", step ); fflush(stdout);
+	printf(" [ step %4d ] ", step );
+      fflush(stdout);
 
       
       printf( "total injected energy is %g, "

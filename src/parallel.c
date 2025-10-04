@@ -14,19 +14,20 @@ int main(int argc, char **argv)
   plane_t planes[2];
   buffers_t buffers[2];
   int output_energy_stat_perstep;
+  int injection_frequency;
 
   /* MPI Init */
   int Rank, Nprocs;
   int neighbours[4];
   int mpi_provided_thread_level;
   MPI_Comm STENCIL_WORLD;
-
+  
   MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED, &mpi_provided_thread_level);
   if (mpi_provided_thread_level < MPI_THREAD_FUNNELED) {
     printf("Aborting...\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
-  
+
   MPI_Comm_dup(MPI_COMM_WORLD, &STENCIL_WORLD); // separate context
 
   MPI_Comm_rank(STENCIL_WORLD, &Rank);
@@ -36,7 +37,7 @@ int main(int argc, char **argv)
   int ret = initialize (  &STENCIL_WORLD, &Rank, &Nprocs, argc, argv, &S, &N, &periodic, &output_energy_stat_perstep,
                           neighbours, &Niterations,
                           &Nsources, &Nsources_local, &Sources_local, &energy_per_source,
-                          planes, buffers );
+                          planes, buffers, &injection_frequency );
   if (ret)
   {
     printf("task %d is opting out with termination code %d\n", Rank, ret );
@@ -52,8 +53,10 @@ int main(int argc, char **argv)
     {
 
       MPI_Request reqs[8]; // requests for non-blocking comms
-
-      inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, N, &planes[current] );
+      if ( iter % injection_frequency == 0)
+      { 
+      	inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, N, &planes[current] );
+      }
 
       /* -------------------------------------- */
       // [A] fill the buffers
@@ -149,7 +152,7 @@ int main(int argc, char **argv)
 
   double t1 = MPI_Wtime() - t0;
 
-  output_energy_stat ( -1, &planes[!current], Niterations * Nsources*energy_per_source, Rank, &STENCIL_WORLD );
+  output_energy_stat ( -1, &planes[!current], (Niterations/injection_frequency) * Nsources * energy_per_source, Rank, &STENCIL_WORLD );
 
   if ( Rank == 0 )
     printf("Elapsed time: %g seconds\n", t1);
@@ -179,8 +182,8 @@ int initialize (  MPI_Comm  	*Comm,
                   vec2_t 	**Sources_local,
                   double  	*energy_per_source,
                   plane_t 	*planes,
-                  buffers_t 	*buffers
-                  //int     	*injection_frequency
+                  buffers_t 	*buffers,
+                  int     	*injection_frequency
 		)
 {
   int halt = 0;     // halt flag
@@ -193,34 +196,42 @@ int initialize (  MPI_Comm  	*Comm,
   (*S)[_x_]         = 10000;
   (*S)[_y_]         = 10000;
   *periodic         = 0;
-  *Nsources         = 4;
+  *Nsources         = 1;
   *Nsources_local   = 0;
   *Sources_local    = NULL;
-  *Niterations      = 1000;
+  *Niterations      = 100;
   *energy_per_source = 1.0;
   *output_energy_stat = 0;
-
-  if ( planes == NULL ) {
-    return 1;
-  }
-
+  *injection_frequency = 10;
+  
   planes[OLD].size[0] = 0;
+  planes[OLD].size[1] = 0;
   planes[NEW].size[0] = 0;
+  planes[NEW].size[1] = 0;
+  planes[OLD].data = NULL;
+  planes[NEW].data = NULL;
   
-  for ( int i = 0; i < 4; i++ )
-    neighbours[i] = MPI_PROC_NULL; // non-existing process constant
+  neighbours[0] = MPI_PROC_NULL;
+  neighbours[1] = MPI_PROC_NULL;
+  neighbours[2] = MPI_PROC_NULL;
+  neighbours[3] = MPI_PROC_NULL;
 
-  for ( int b = 0; b < 2; b++ )
-    for ( int d = 0; d < 4; d++ )
-      buffers[b][d] = NULL; 
-  
+  buffers[0][0] = NULL;
+  buffers[0][1] = NULL; 
+  buffers[0][2] = NULL; 
+  buffers[0][3] = NULL; 
+  buffers[1][0] = NULL; 
+  buffers[1][1] = NULL; 
+  buffers[1][2] = NULL; 
+  buffers[1][3] = NULL; 
+
   // ································
   // process the commadn line
   
   while ( 1 )
   {
     int opt;
-    while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:v:")) != -1)
+    while((opt = getopt(argc, argv, ":hx:y:e:E:n:o:p:f:v:")) != -1)
       {
 	switch( opt )
 	  {
@@ -245,6 +256,9 @@ int initialize (  MPI_Comm  	*Comm,
 	  case 'p': *periodic = (atoi(optarg) > 0);
 	    break;
 
+	  case 'f': *injection_frequency = atoi(optarg);
+	    break;
+
 	  case 'v': verbose = atoi(optarg);
 	    break;
 
@@ -255,8 +269,9 @@ int initialize (  MPI_Comm  	*Comm,
 		      "-y    y size of the plate [10000]\n"
 		      "-e    how many energy sources on the plate [4]\n"
 		      "-E    how many energy sources on the plate [1.0]\n"
-		      "-n    how many iterations [1000]\n"
-		      "-p    whether periodic boundaries applies  [0 = false]\n\n"
+		      "-n    how many iterations [100]\n"
+		      "-p    whether periodic boundaries applies  [0 = false]\n"
+		      "-f    injection frequency, i.e. every how many iterations to inject [10]\n\n"
 		      );
 	    halt = 1; }
 	    break;
@@ -313,14 +328,11 @@ int initialize (  MPI_Comm  	*Comm,
       printf("error: the periodic flag must be either 0 or 1\n");
       exit(1);
     }
-  /*
   if ( *injection_frequency < 1 || *injection_frequency > *Niterations )
     {
       printf("error: the injection frequency must be in [1,%d]\n", *Niterations);
       exit(1);
     }
-  */
-
   
   // ····························�···
   /*
@@ -334,8 +346,8 @@ int initialize (  MPI_Comm  	*Comm,
 
   vec2_t Grid;
   double formfactor = ((*S)[_x_] >= (*S)[_y_] ? (double)(*S)[_x_]/(*S)[_y_] : (double)(*S)[_y_]/(*S)[_x_] );
-  int    dimensions = 2 - (*Ntasks <= ((int)formfactor+1) );
-
+  int    dimensions = 2 - (*Ntasks <= ((int)formfactor+1) ); 	// heuristics to avoid creating thin, inefficient
+								// domain patches when having few procs
   
   if ( dimensions == 1 )
     {
@@ -346,8 +358,8 @@ int initialize (  MPI_Comm  	*Comm,
     }
   else
     {
-      int   Nf;
-      uint *factors;
+      int   Nf;		// number of the factors (e.g. 3)
+      uint  *factors; 	// array of factors (e.g. [2,2,3])
       uint  first = 1;
       ret = simple_factorization( *Ntasks, &Nf, &factors );
       
@@ -362,7 +374,6 @@ int initialize (  MPI_Comm  	*Comm,
 
   (*N)[_x_] = Grid[_x_];
   (*N)[_y_] = Grid[_y_];
-  
 
   // ····························�···
   // my cooridnates in the grid of processors
@@ -394,7 +405,7 @@ int initialize (  MPI_Comm  	*Comm,
 	neighbours[NORTH] = ( Y > 0 ? *Me - Grid[_x_]: MPI_PROC_NULL );
 	neighbours[SOUTH] = ( Y < Grid[_y_]-1 ? *Me + Grid[_x_] : MPI_PROC_NULL ); }
     }
-
+  
   // ····························�····
   // the size of my patch
 
@@ -420,31 +431,28 @@ int initialize (  MPI_Comm  	*Comm,
   
 
   if ( verbose > 0 )
-    {
-      if ( *Me == 0 ) {
-	printf("Tasks are decomposed in a grid %d x %d\n\n",
-		 Grid[_x_], Grid[_y_] );
-	fflush(stdout);
+    { 
+      if (*Me == 0)
+      {
+		printf("(DEBUG) -- Tasks are decomposed in a grid %d x %d\n\n", Grid[_y_], Grid[_x_] );
+	     	fflush(stdout);
       }
 
-      MPI_Barrier(*Comm);
-
       for ( int t = 0; t < *Ntasks; t++ )
-	{
+      {   
+	  MPI_Barrier(*Comm);
 	  if ( t == *Me )
-	    {
-	      printf("Task %4d :: "
-		     "\tgrid coordinates : %3d, %3d\n"
-		     "\tneighbours: N %4d    E %4d    S %4d    W %4d\n",
-		     *Me, X, Y,
+	  {
+	      printf("(DEBUG) -- Task %d:\n"
+		     "(DEBUG) -- grid coordinates : %d,%d\n"
+		     "(DEBUG) -- grid size : %d,%d\n"
+		     "(DEBUG) -- neighbours: N->%d, E->%d, S->%d, W->%d\n",
+		     *Me, Y, X, mysize[1], mysize[0],
 		     neighbours[NORTH], neighbours[EAST],
 		     neighbours[SOUTH], neighbours[WEST] );
 	      fflush(stdout);
-	    }
-
-	  MPI_Barrier(*Comm);
-	}
-
+	  }
+      }
     }
 
   // ····························�···
@@ -453,7 +461,7 @@ int initialize (  MPI_Comm  	*Comm,
   ret = memory_allocate(neighbours, buffers, planes);
   
   // ····························�···
-  // allocae the heat sources
+  // allocate the heat sources
 
   ret = initialize_sources( *Me, *Ntasks, Comm, mysize, *Nsources, Nsources_local, Sources_local );
  

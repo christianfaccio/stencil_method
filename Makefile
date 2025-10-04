@@ -19,6 +19,15 @@ DEBUG_FLAGS = -g -O3 -DDEBUG
 # Default ENV_VARS
 nt ?= 8
 np ?= 1
+x ?= 10000
+y ?= 10000
+p ?= 0
+n ?= 100
+f ?= 100
+e ?= 4 
+E ?= 1.0
+o ?= 0
+v ?= 0
 
 # Create build
 $(BUILD_DIR):
@@ -53,10 +62,10 @@ $(BUILD_DIR)/parallel_debug: $(SRC_DIR)/parallel.c $(INCLUDE)/parallel.h | $(BUI
 
 # Run
 serial: build_serial
-	$(BUILD_DIR)/serial -x 1000 -y 1000 -n 100
+	$(BUILD_DIR)/serial -x $(x) -y $(y) -n $(n) -p $(p) -e $(e) -E $(E) -f $(f) -o $(o) 
 
 parallel: build_parallel
-	export OMP_NUM_THREADS=$(nt); mpirun -np $(np) $(BUILD_DIR)/parallel -x 10000 -y 10000 -n 99
+	export OMP_NUM_THREADS=$(nt); mpirun -np $(np) $(BUILD_DIR)/parallel -x $(x) -y $(y) -n $(n) -p $(p) -e $(e) -E $(E) -f $(f) -o $(o) -v $(v)
 
 # Clean
 clean: 

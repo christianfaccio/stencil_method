@@ -67,7 +67,6 @@ int main(int argc, char **argv)
   
   memory_release( planes[OLD], Sources );
 
-  MPI_Finalize();
   return 0;
 }
 
@@ -95,7 +94,7 @@ int initialize (  int		    argc,
   S[_y_]            = 1000;
   *periodic         = 0;
   *Nsources         = 1;
-  *Niterations      = 99;
+  *Niterations      = 100;
   *output_energy_at_steps = 0;
   *energy_per_source = 1.0;
   *injection_frequency = *Niterations;
@@ -141,7 +140,7 @@ int initialize (  int		    argc,
 			    "-y    y size of the plate [1000]\n"
 			    "-e    how many energy sources on the plate [1]\n"
 			    "-E    how many energy sources on the plate [1.0]\n"
-			    "-f    the frequency of energy injection [0.0]\n"
+			    "-f    the frequency of energy injection [100]\n"
 			    "-n    how many iterations [100]\n"
 			    "-p    whether periodic boundaries applies  [0 = false]\n"
 			    "-o    whether to print the energy budgest at every step [0 = false]\n"

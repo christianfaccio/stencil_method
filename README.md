@@ -30,6 +30,13 @@
         1. Strong scaling -> Keep the problem size fixed and increase the number of MPI processes
         2. Weak scaling -> Increase the problem size proportionally to the number of MPI processes
 
+- #### Different seeds:
+    1. On **serial** version, the seed is always the same
+    2. On **parallel** version, seed is based on time and changes every run
+
+- #### MPI_THREAD_FUNNELED:
+    It is appropriate since the threads in openMP don't call MPI functions, only the main thread does
+
 
 
 
@@ -48,3 +55,5 @@
   - Each process gets base size: s = S[dim] / Grid[dim]
   - Remainder r = S[dim] % Grid[dim]
   - First r processes in each dimension get +1 extra cell: mysize[dim] = s + (coord < r)
+
+- #### Why with nt=4,np=2 we have data races (so energy output is wrong) while with nt=1,np=8 it works fine?

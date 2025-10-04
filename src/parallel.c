@@ -48,18 +48,29 @@ int main(int argc, char **argv)
   int current = OLD;
   double t0 = MPI_Wtime(); // for wall-clock time
 
+  // Timing variables
+  double total_comm_time = 0.0;
+  double total_comp_time = 0.0;
+  double t_start, t_end;
+
   /* main loop */
   for (int iter = 0; iter < Niterations; iter++)
     {
 
       MPI_Request reqs[8]; // requests for non-blocking comms
+
+      // COMPUTATION: Energy injection
+      t_start = MPI_Wtime();
       if ( iter % injection_frequency == 0)
       {
       	inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, N, &planes[current] );
       }
+      t_end = MPI_Wtime();
+      total_comp_time += (t_end - t_start);
 
       /* -------------------------------------- */
       // [A] fill the buffers
+      t_start = MPI_Wtime();
       double *data = planes[current].data;
       uint sizex = planes[current].size[_x_];
       uint sizey = planes[current].size[_y_];
@@ -88,8 +99,11 @@ int main(int argc, char **argv)
           for (uint j = 0; j < sizey; j++)
               buffers[SEND][WEST][j] = data[IDX(1, j+1)];
       }
+      t_end = MPI_Wtime();
+      total_comm_time += (t_end - t_start);
 
       // [B] perform the halo communications
+      t_start = MPI_Wtime();
       //     (1) use Send / Recv
       //     (2) use Isend / Irecv
       //         --> can you overlap communication and compution in this way?
@@ -108,9 +122,12 @@ int main(int argc, char **argv)
 				);
 	      }
       }
-      MPI_Waitall(req_count, reqs, MPI_STATUSES_IGNORE);      
+      MPI_Waitall(req_count, reqs, MPI_STATUSES_IGNORE);
+      t_end = MPI_Wtime();
+      total_comm_time += (t_end - t_start);
 
       // [C] copy the haloes data
+      t_start = MPI_Wtime();
 
       // NORTH: copy received data to ghost row j=0
       if (neighbours[NORTH] != MPI_PROC_NULL) {
@@ -135,11 +152,15 @@ int main(int argc, char **argv)
           for (uint j = 0; j < sizey; j++)
               data[IDX(0, j+1)] = buffers[RECV][WEST][j];
       }
+      t_end = MPI_Wtime();
+      total_comm_time += (t_end - t_start);
 
       /* --------------------------------------  */
       /* update grid points */
-
+      t_start = MPI_Wtime();
       update_plane( periodic, &planes[current], &planes[!current] );
+      t_end = MPI_Wtime();
+      total_comp_time += (t_end - t_start);
 
       /* output if needed */
       if ( output_energy_stat_perstep )
@@ -154,8 +175,15 @@ int main(int argc, char **argv)
 
   output_energy_stat ( -1, &planes[!current], (Niterations/injection_frequency) * Nsources * energy_per_source, Rank, &STENCIL_WORLD );
 
-  if ( Rank == 0 )
+  // Report timing statistics
+  if ( Rank == 0 ) {
     printf("Elapsed time: %g seconds\n", t1);
+    printf("\nTiming breakdown (Rank 0):\n");
+    printf("  Computation time: %g seconds (%.2f%%)\n", total_comp_time, 100.0*total_comp_time/t1);
+    printf("  Communication time: %g seconds (%.2f%%)\n", total_comm_time, 100.0*total_comm_time/t1);
+    printf("  Other time: %g seconds (%.2f%%)\n", t1-total_comp_time-total_comm_time,
+           100.0*(t1-total_comp_time-total_comm_time)/t1);
+  }
 
   memory_release( buffers, planes, Sources_local );
   

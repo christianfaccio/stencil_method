@@ -70,7 +70,6 @@ int initialize (	MPI_Comm 	*Comm,
 		);  
 
 int update_plane (	const int       periodic,
-                  	const vec2_t    N,
 			const plane_t   *oldplane,
                         plane_t   	*newplane
                	);   
@@ -227,7 +226,7 @@ static inline int inject_energy (   const int       	periodic,
 			            const vec2_t   	*Sources,
 			            const double    	energy,
 			            const vec2_t       	N,
-                                    plane_t      	*plane 
+                                    plane_t      	*plane
                                 )
 /*
 Function to inject energy into the grid at the positions specified in Sources array.
@@ -238,11 +237,11 @@ Grid with periodic boundaries and source at (1,3):
 [G][G][G][G][G]
 [G][S][x][x][S] <- Source at (1,3) injects here
 [G][x][x][x][G]
-[G][x][x][x][G] 
+[G][x][x][x][G]
 [G][S][G][G][G]
 */
 {
-  register const uint fsize = N[_x_]+2;
+  register const uint fsize = plane->size[_x_]+2;
   double *restrict data = plane->data;
   
   for (int s = 0; s < Nsources; s++)
@@ -257,16 +256,16 @@ Grid with periodic boundaries and source at (1,3):
 	  // If only 1 process in x-direction, handle x-wrapping locally
 	  if ( N[_x_] == 1 ) {
 	      if ( x == 1 )
-		  data[IDX(N[_x_]+1, y)] += energy;
-	      if ( x == N[_x_] )
+		  data[IDX(plane->size[_x_]+1, y)] += energy;
+	      if ( x == plane->size[_x_] )
 		  data[IDX(0, y)] += energy;
 	  }
 
 	  // If only 1 process in y-direction, handle y-wrapping locally
 	  if ( N[_y_] == 1 ) {
 	      if ( y == 1 )
-		  data[IDX(x, N[_y_]+1)] += energy;
-	      if ( y == N[_y_] )
+		  data[IDX(x, plane->size[_y_]+1)] += energy;
+	      if ( y == plane->size[_y_] )
 		  data[IDX(x, 0)] += energy;
 	  }
       }

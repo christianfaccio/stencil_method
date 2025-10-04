@@ -54,7 +54,7 @@ int main(int argc, char **argv)
 
       MPI_Request reqs[8]; // requests for non-blocking comms
       if ( iter % injection_frequency == 0)
-      { 
+      {
       	inject_energy( periodic, Nsources_local, Sources_local, energy_per_source, N, &planes[current] );
       }
 
@@ -138,8 +138,8 @@ int main(int argc, char **argv)
 
       /* --------------------------------------  */
       /* update grid points */
-      
-      update_plane( periodic, N, &planes[current], &planes[!current] );
+
+      update_plane( periodic, &planes[current], &planes[!current] );
 
       /* output if needed */
       if ( output_energy_stat_perstep )
@@ -470,7 +470,6 @@ int initialize (  MPI_Comm  	*Comm,
 }
 
 int update_plane (	const int     	periodic,
-                  	const vec2_t  	N,
 			const plane_t 	*oldplane,
                         plane_t 	*newplane
                   )
@@ -503,20 +502,13 @@ int update_plane (	const int     	periodic,
   const double alpha = 0.25;
 
   #ifdef _OPENMP
-  #pragma omp parallel for schedule(static) shared(old_data, new_data, fsize, xsize, ysize) firstprivate(alpha)
+  #pragma omp parallel for schedule(static)
   #endif
   for (uint j = 1; j <= ysize; j++)
 	{
 	      #pragma GCC unroll 4
 	      for ( uint i = 1; i <= xsize; i++)
 		  {
-
-		      // NOTE: (i-1,j), (i+1,j), (i,j-1) and (i,j+1) always exist even
-		      //       if this patch is at some border without periodic conditions;
-		      //       in that case it is assumed that the +-1 points are outside the
-		      //       plate and always have a value of 0, i.e. they are an
-		      //       "infinite sink" of heat
-
 		      // five-points stencil formula
 		      double result = old_data[IDX(i,j)] * (1.0 - 4*alpha);
 		      result += alpha * (old_data[IDX(i-1,j)] + old_data[IDX(i+1,j)] + old_data[IDX(i,j-1)] + old_data[IDX(i,j+1)]);
@@ -527,23 +519,17 @@ int update_plane (	const int     	periodic,
 
   if ( periodic )
       {
-	  if ( N[_x_] == 1 )
-	      {
-		  for ( int i=1; i<=xsize; i++)
-		  {
-			new_data[ IDX(i, 0) ] = new_data[ IDX(i, ysize) ];
-			new_data[ IDX(i, ysize+1) ] = new_data[ IDX(i, 1) ];
-		  }
-	      }
+	  for ( int i=1; i<=xsize; i++)
+	  {
+		new_data[ IDX(i, 0) ] = new_data[ IDX(i, ysize) ];
+		new_data[ IDX(i, ysize+1) ] = new_data[ IDX(i, 1) ];
+	  }
 
-	  if ( N[_y_] == 1 )
-	      {
-		  for (int j=1; j<=ysize; j++)
-		  {
-			new_data[ IDX( 0, j) ] = new_data[ IDX(xsize, j) ];
-			new_data[ IDX( xsize+1, j) ] = new_data[ IDX(1, j) ];
-		  }
-	      }
+	  for (int j=1; j<=ysize; j++)
+	  {
+		new_data[ IDX( 0, j) ] = new_data[ IDX(xsize, j) ];
+		new_data[ IDX( xsize+1, j) ] = new_data[ IDX(1, j) ];
+	  }
       }
   
   return 0;

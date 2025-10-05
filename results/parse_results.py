@@ -88,9 +88,9 @@ def main():
     # Find baseline (typically single thread or minimum thread count)
     threads_baseline = min(threads_results, key=lambda x: x['threads'])
     threads_baseline_time = threads_baseline['total_time']
-    weak_baseline = min(weak_results, key=lambda x: x['threads'])
+    weak_baseline = min(weak_results, key=lambda x: x['nodes'])
     weak_baseline_time = weak_baseline['total_time']
-    strong_baseline = min(strong_results, key=lambda x: x['threads'])
+    strong_baseline = min(strong_results, key=lambda x: x['nodes'])
     strong_baseline_time = strong_baseline['total_time']
 
     for result in threads_results:
@@ -100,18 +100,18 @@ def main():
     for result in strong_results:
         result['speedup'] = strong_baseline_time / result['total_time']
 
-    # Calculate efficiency -> efficiency = speedup/num_threads
+    # Calculate efficiency -> efficiency = speedup/num_threads for threads, speedup for weak (should be ~1), speedup/num_nodes for strong
     for result in threads_results:
         result['efficiency'] = result['speedup'] / result['threads']
     for result in weak_results:
-        result['efficiency'] = result['speedup'] / result['threads']
+        result['efficiency'] = result['speedup']  # For weak scaling, efficiency is just the speedup (ideally ~1.0)
     for result in strong_results:
-        result['efficiency'] = result['speedup'] / result['threads']
+        result['efficiency'] = result['speedup'] / result['nodes']
 
     # Write to CSV
-    threads_output_csv = 'results/threads_scaling/threads_results.csv'
-    weak_output_csv = 'results/weak_scaling/weak_results.csv'
-    strong_output_csv = 'results/strong_scaling/strong_results.csv'
+    threads_output_csv = 'results/threads_results.csv'
+    weak_output_csv = 'results/weak_results.csv'
+    strong_output_csv = 'results/strong_results.csv'
     fieldnames = ['job_id', 'job_name', 'nodes', 'mpi_tasks', 'tasks/node', 'threads', 'total_time',
                   'computation_time', 'communication_time', 'speedup', 'efficiency']
 

@@ -6,6 +6,8 @@ bin/*
 .vscode/*
 
 # latex
+*.tex
+*.sty 
 *.aux
 *.bbl
 *.blg
@@ -15,7 +17,6 @@ bin/*
 *.snm
 *.toc
 *.synctex.gz
-images/*
 
 # venv
 stencil/

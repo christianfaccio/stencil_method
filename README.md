@@ -8,3 +8,4 @@
 
 ---
 
+![](slides/energy_evolution_periodic.gif)

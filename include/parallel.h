@@ -26,6 +26,7 @@
 #define _y_ 	1
 
 #define IDX(i,j) ((j)*fsize + (i))
+#define LONG_ACCURACY 0
 
 typedef unsigned int uint;
 typedef uint    vec2_t[2]; 		// for (x,y) coordinates

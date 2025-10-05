@@ -16,3 +16,6 @@ bin/*
 *.toc
 *.synctex.gz
 images/*
+
+# venv
+stencil/

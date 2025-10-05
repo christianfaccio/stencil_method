@@ -78,24 +78,28 @@ int main(int argc, char **argv)
 
       // NORTH: send first row (j=1)
       if (neighbours[NORTH] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint i = 0; i < sizex; i++)
               buffers[SEND][NORTH][i] = data[IDX(i+1, 1)];
       }
 
       // SOUTH: send last row (j=sizey)
       if (neighbours[SOUTH] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint i = 0; i < sizex; i++)
               buffers[SEND][SOUTH][i] = data[IDX(i+1, sizey)];
       }
 
       // EAST: send rightmost column (i=sizex)
       if (neighbours[EAST] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint j = 0; j < sizey; j++)
               buffers[SEND][EAST][j] = data[IDX(sizex, j+1)];
       }
 
       // WEST: send leftmost column (i=1)
       if (neighbours[WEST] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint j = 0; j < sizey; j++)
               buffers[SEND][WEST][j] = data[IDX(1, j+1)];
       }
@@ -131,24 +135,28 @@ int main(int argc, char **argv)
 
       // NORTH: copy received data to ghost row j=0
       if (neighbours[NORTH] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint i = 0; i < sizex; i++)
               data[IDX(i+1, 0)] = buffers[RECV][NORTH][i];
       }
 
       // SOUTH: copy received data to ghost row j=sizey+1
       if (neighbours[SOUTH] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint i = 0; i < sizex; i++)
                data[IDX(i+1, sizey+1)] = buffers[RECV][SOUTH][i];
       }
 
       // EAST: copy received data to ghost column i=sizex+1
       if (neighbours[EAST] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint j = 0; j < sizey; j++)
               data[IDX(sizex+1, j+1)] = buffers[RECV][EAST][j];
       }
 
       // WEST: copy received data to ghost column i=0
       if (neighbours[WEST] != MPI_PROC_NULL) {
+          #pragma omp parallel for
           for (uint j = 0; j < sizey; j++)
               data[IDX(0, j+1)] = buffers[RECV][WEST][j];
       }
@@ -529,9 +537,7 @@ int update_plane (	const int     	periodic,
   double *restrict new_data = newplane->data;
   const double alpha = 0.25;
 
-  #ifdef _OPENMP
   #pragma omp parallel for schedule(static)
-  #endif
   for (uint j = 1; j <= ysize; j++)
 	{
 	      #pragma GCC unroll 4
@@ -547,12 +553,14 @@ int update_plane (	const int     	periodic,
 
   if ( periodic )
       {
+	  #pragma omp parallel for
 	  for ( int i=1; i<=xsize; i++)
 	  {
 		new_data[ IDX(i, 0) ] = new_data[ IDX(i, ysize) ];
 		new_data[ IDX(i, ysize+1) ] = new_data[ IDX(i, 1) ];
 	  }
 
+	  #pragma omp parallel for
 	  for (int j=1; j<=ysize; j++)
 	  {
 		new_data[ IDX( 0, j) ] = new_data[ IDX(xsize, j) ];

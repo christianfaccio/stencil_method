@@ -172,7 +172,7 @@ int main(int argc, char **argv)
 
       /* output if needed */
       if ( output_energy_stat_perstep )
- 	      output_energy_stat ( iter, &planes[!current], (iter+1)*Nsources*energy_per_source, Rank, &STENCIL_WORLD );
+ 	      output_energy_stat ( iter, &planes[!current], (iter+1)*Nsources*energy_per_source, Rank, Nprocs, S, N, &STENCIL_WORLD );
 	
       /* swap plane indexes for the new iteration */
       current = !current;
@@ -181,7 +181,7 @@ int main(int argc, char **argv)
 
   double t1 = MPI_Wtime() - t0;
 
-  output_energy_stat ( -1, &planes[!current], (Niterations/injection_frequency) * Nsources * energy_per_source, Rank, &STENCIL_WORLD );
+  output_energy_stat ( -1, &planes[!current], (Niterations/injection_frequency) * Nsources * energy_per_source, Rank, Nprocs, S, N, &STENCIL_WORLD );
 
   // Report timing statistics
   if ( Rank == 0 ) {

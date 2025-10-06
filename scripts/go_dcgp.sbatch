@@ -34,6 +34,8 @@ module load openmpi/4.1.6--gcc--12.2.0
 # =======================================================
 
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK}
+export OMP_PLACES=cores
+export OMP_PROC_BIND=close
 
 # =======================================================
 #               Print Job Information

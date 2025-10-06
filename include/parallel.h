@@ -347,27 +347,30 @@ static inline int get_total_energy( plane_t *plane,
 	return 0;
 }
                             
-static inline int output_energy_stat (  int 		step, 
-                          		plane_t 	*plane, 
-                          		double 		budget, 
-                          		int 		Me, 
-                          		MPI_Comm 	*Comm 
+static inline int output_energy_stat (  int 		step,
+                          		plane_t 	*plane,
+                          		double 		budget,
+                          		int 		Me,
+                          		int		Ntasks,
+                          		vec2_t		S,
+                          		vec2_t		N,
+                          		MPI_Comm 	*Comm
 					)
 {
 
   double system_energy = 0;
   double tot_system_energy = 0;
   get_total_energy ( plane, &system_energy );
-  
+
   MPI_Reduce ( &system_energy, &tot_system_energy, 1, MPI_DOUBLE, MPI_SUM, 0, *Comm );
-  
+
   if ( Me == 0 )
     {
       if ( step >= 0 )
 	printf(" [ step %4d ] ", step );
       fflush(stdout);
 
-      
+
       printf( "total injected energy is %g, "
 	      "system energy is %g "
 	      "( in avg %g per grid point)\n",
@@ -375,7 +378,88 @@ static inline int output_energy_stat (  int 		step,
 	      tot_system_energy,
 	      tot_system_energy / (plane->size[_x_]*plane->size[_y_]) );
     }
-  
+
+  // Save grid data to file
+  if (step >= 0) {
+    register const uint fsize = plane->size[_x_]+2;
+    double *restrict local_data = plane->data;
+
+    // Calculate global grid dimensions
+    uint global_sizex = S[_x_];
+    uint global_sizey = S[_y_];
+
+    // Determine my position in the MPI grid
+    int X = Me % N[_x_];
+    int Y = Me / N[_x_];
+
+    // Calculate my starting position in global grid
+    uint start_x = (global_sizex / N[_x_]) * X + (X < (global_sizex % N[_x_]) ? X : (global_sizex % N[_x_]));
+    uint start_y = (global_sizey / N[_y_]) * Y + (Y < (global_sizey % N[_y_]) ? Y : (global_sizey % N[_y_]));
+
+    // Extract local data (without ghost cells)
+    uint local_sizex = plane->size[_x_];
+    uint local_sizey = plane->size[_y_];
+    float *local_buffer = (float*)malloc(local_sizex * local_sizey * sizeof(float));
+
+    for (uint j = 0; j < local_sizey; j++) {
+      for (uint i = 0; i < local_sizex; i++) {
+        local_buffer[j * local_sizex + i] = (float)local_data[IDX(i+1, j+1)];
+      }
+    }
+
+    if (Me == 0) {
+      // Rank 0: allocate full grid and receive from all ranks
+      float *global_grid = (float*)calloc(global_sizex * global_sizey, sizeof(float));
+
+      // Copy own data
+      for (uint j = 0; j < local_sizey; j++) {
+        for (uint i = 0; i < local_sizex; i++) {
+          global_grid[(start_y + j) * global_sizex + (start_x + i)] = local_buffer[j * local_sizex + i];
+        }
+      }
+
+      // Receive from other ranks
+      for (int rank = 1; rank < Ntasks; rank++) {
+        // Calculate sender's position and size
+        int sender_X = rank % N[_x_];
+        int sender_Y = rank / N[_x_];
+
+        uint sender_sizex = global_sizex / N[_x_] + (sender_X < (global_sizex % N[_x_]) ? 1 : 0);
+        uint sender_sizey = global_sizey / N[_y_] + (sender_Y < (global_sizey % N[_y_]) ? 1 : 0);
+        uint sender_start_x = (global_sizex / N[_x_]) * sender_X + (sender_X < (global_sizex % N[_x_]) ? sender_X : (global_sizex % N[_x_]));
+        uint sender_start_y = (global_sizey / N[_y_]) * sender_Y + (sender_Y < (global_sizey % N[_y_]) ? sender_Y : (global_sizey % N[_y_]));
+
+        float *recv_buffer = (float*)malloc(sender_sizex * sender_sizey * sizeof(float));
+        MPI_Recv(recv_buffer, sender_sizex * sender_sizey, MPI_FLOAT, rank, 0, *Comm, MPI_STATUS_IGNORE);
+
+        // Copy received data to global grid
+        for (uint j = 0; j < sender_sizey; j++) {
+          for (uint i = 0; i < sender_sizex; i++) {
+            global_grid[(sender_start_y + j) * global_sizex + (sender_start_x + i)] = recv_buffer[j * sender_sizex + i];
+          }
+        }
+
+        free(recv_buffer);
+      }
+
+      // Write to file
+      char filename[256];
+      sprintf(filename, "plane_%05d.bin", step);
+      FILE *outfile = fopen(filename, "w");
+      if (outfile != NULL) {
+        fwrite(global_grid, sizeof(float), global_sizex * global_sizey, outfile);
+        fclose(outfile);
+      }
+
+      free(global_grid);
+    } else {
+      // Other ranks: send data to rank 0
+      MPI_Send(local_buffer, local_sizex * local_sizey, MPI_FLOAT, 0, 0, *Comm);
+    }
+
+    free(local_buffer);
+  }
+
   return 0;
 }
 

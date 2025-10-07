@@ -2,8 +2,8 @@
 
 echo "Submitting Strong Scaling jobs..."
 
-TASKS_PER_NODE=4
-CPUS_PER_TASK=28
+TASKS_PER_NODE=8 # MPI tasks
+CPUS_PER_TASK=14   # OMP threads
 GRID_SIZE=10000 
 N_STEPS=500
 INJ_FREQ="-f 50"

@@ -13,7 +13,7 @@ INCLUDES = -I$(INCLUDE_DIR)
 
 # Flags
 MATH = -lm
-CFLAGS = -std=c99 -Wall -Wextra -Wno-unknown-pragmas
+CFLAGS = -std=c99 -Wall -Wextra -Wno-unknown-pragmas -Wno-sign-compare -Wno-unused-but-set-variable
 OPT_FLAGS = -O3 -fopenmp -march=${ARCH}
 
 # Default ENV_VARS
@@ -60,4 +60,3 @@ clean:
 
 clean_all: clean
 	rm -f *.o *.out core.*
-

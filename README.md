@@ -12,6 +12,22 @@
    <img src="slides/assets/energy_evolution_periodic.gif" alt="Energy Evolution">
 </div>
 
+## Description
+
+The objective of this project is to evaluate the performance of a parallel implementation of a 2D stencil computation using a hybrid MPI and OpenMP approach. Usually used in numerical simulations, stencil computations involve updating each point in a grid based on the values of its neighboring points. Here we consider the **heat equation** as a case study:
+
+```math
+\frac{\partial u(t,\vec{x})}{\partial t} = \alpha \nabla^2 u(t,\vec{x})
+```
+
+where $\alpha$ is the heat diffusivity and $u$ the energy at position $\vec{x}$ and time $t$. Discretizing the equation in two dimensions  on an $m\times l$ grid using finite differences leads to the following update rule for each grid point:
+
+```math
+U_{m,l}^{n+1} = U_{m,l}^n + \frac{\alpha \Delta t}{\Delta x^2} \left( U_{m-1,l}^n + U_{m+1,l}^n - 2U_{m,l}^n \right) + \frac{\alpha \Delta t}{\Delta y^2} \left( U_{m,l-1}^n + U_{m, l+1}^n - 2U_{m,l}^n \right) 
+```
+
+This approximation is known as the **five-points stencil**. The project involves implementing both a serial and a parallel version of this computation, analyzing their performance in terms of execution time and scalability.
+
 ## Project Structure
 
 ```
@@ -120,3 +136,14 @@ sbatch scripts/weak_scaling.sh
 > The `go_dcgp.sbatch` script is used internally by the other .sh scripts so don't use it directly (at least for this project).
 
 ## Choices made
+
+This section is made to explain why certain code chunks were implemented in a specific way or the idea behind some configurations.
+
+- **Separate context**: `MPI_Comm_dup(MPI_COMM_WORLD, &STENCIL_WORLD)` is best practice to isolate the parallel code from other tasks in the computer;
+- `MPI_THREAD_FUNNELED` is used because only the main thread will make MPI calls;
+- **Domain Decomposition**: Total domain is divided among processes, using an heuristics to avoid creating thin slices (with form factor) and using a simple factorization algorithm.
+- **Sources init**: Task 0 assigns randomly the sources to the tasks, shares with them using `MPI_Bcast` and then each task randomly places the sources in its subdomain.
+- **MPI Communication**: first (SEND) part of the buffer is filled with local data, then it is shared and saved in the second part of the buffer (RECV) such that all the tasks know the correct values to use in the stencil computation.
+- **Asynchronous communication**: `MPI_Isend` and `MPI_Irecv` are used to overlap communication and computation, improving performance.
+- **OpenMP Parallel Regions**: `#pragma GCC unroll 4` is used to suggest the compiler to unroll the loop 4 times, potentially improving performance by reducing loop overhead and increasing instruction-level parallelism. `schedule(static)` is used to divide the loop iterations into contiguous chunks, which can improve cache performance and reduce overhead. `export OMP_PLACES=cores` and `export OMP_PROC_BIND=close` are set to bind threads to specific cores, reducing context switching and improving cache locality. Finally, `MPI_Reduce` is used to compute the total energy.
+- **Optimizations**: `register` keyword is used to suggest the compiler to store variables in CPU registers for faster access. `-O3` optimization flag is used to enable high-level optimizations during compilation, potentially improving performance. `-march=native` enables the use of all instruction sets available on the host machine, optimizing the code for the specific architecture of the CPU.

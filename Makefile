@@ -1,6 +1,7 @@
 # Compiler
 CC = gcc
 MPICC = mpicc
+ARCH ?= native
 
 # Directories
 SRC_DIR = src
@@ -12,9 +13,8 @@ INCLUDES = -I$(INCLUDE_DIR)
 
 # Flags
 MATH = -lm
-CFLAGS = -std=c99 -Wall -Wextra -Wpedantic -Wshadow -Wuninitialized -W -Wno-sign-compare -Wno-pedantic -Wno-unknown-pragmas -Wno-unused-but-set-variable -Wno-unused-variable
-OPT_FLAGS = -Ofast -flto -fopenmp 
-DEBUG_FLAGS = -g -O3 -DDEBUG 
+CFLAGS = -std=c99 -Wall -Wextra -Wno-unknown-pragmas
+OPT_FLAGS = -O3 -fopenmp -march=${ARCH}
 
 # Default ENV_VARS
 nt ?= 8
@@ -23,7 +23,7 @@ x ?= 10000
 y ?= 10000
 p ?= 0
 n ?= 100
-f ?= 100
+f ?= 10
 e ?= 4 
 E ?= 1.0
 o ?= 0
@@ -46,19 +46,6 @@ build_parallel: $(BUILD_DIR)/parallel
 
 $(BUILD_DIR)/parallel: $(SRC_DIR)/parallel.c $(INCLUDE_DIR)/parallel.h | $(BUILD_DIR)
 	$(MPICC) $(CFLAGS) $(INCLUDES) -o $@ $< $(MATH) $(OPT_FLAGS)
-
-# Debug builds
-debug: serial_debug parallel_debug
-
-serial_debug: $(BUILD_DIR)/serial_debug
-
-$(BUILD_DIR)/serial_debug: $(SRC_DIR)/serial.c $(INCLUDE)/serial.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $(INCLUDES) -o $@ $< $(MATH)
-
-parallel_debug: $(BUILD_DIR)/parallel_debug
-
-$(BUILD_DIR)/parallel_debug: $(SRC_DIR)/parallel.c $(INCLUDE)/parallel.h | $(BUILD_DIR)
-	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $(INCLUDES) -o $@ $< $(MATH)
 
 # Run
 serial: build_serial

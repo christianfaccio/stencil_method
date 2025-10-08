@@ -240,26 +240,10 @@ int initialize (  MPI_Comm  	*Comm,
   *output_energy_stat = 0;
   *injection_frequency = 10;
   
-  planes[OLD].size[0] = 0;
-  planes[OLD].size[1] = 0;
-  planes[NEW].size[0] = 0;
-  planes[NEW].size[1] = 0;
-  planes[OLD].data = NULL;
-  planes[NEW].data = NULL;
-  
   neighbours[0] = MPI_PROC_NULL;
   neighbours[1] = MPI_PROC_NULL;
   neighbours[2] = MPI_PROC_NULL;
   neighbours[3] = MPI_PROC_NULL;
-
-  buffers[0][0] = NULL;
-  buffers[0][1] = NULL; 
-  buffers[0][2] = NULL; 
-  buffers[0][3] = NULL; 
-  buffers[1][0] = NULL; 
-  buffers[1][1] = NULL; 
-  buffers[1][2] = NULL; 
-  buffers[1][3] = NULL; 
 
   // ································
   // process the commadn line
@@ -495,6 +479,30 @@ int initialize (  MPI_Comm  	*Comm,
   // allocae the needed memory
 
   ret = memory_allocate(neighbours, buffers, planes);
+
+  uint fsize = planes[OLD].size[_x_] + 2;
+  uint xsize = planes[OLD].size[_x_];
+  uint ysize = planes[OLD].size[_y_];
+
+  // Touch-first initialization for OLD plane
+  #pragma omp parallel for schedule(static)
+  	for (uint j = 0; j < ysize + 2; j++) 
+	{
+	    for (uint i = 0; i < xsize + 2; i++) 
+	    {
+		planes[OLD].data[j * fsize + i] = 0.0;
+	    }
+	}
+
+  // Touch-first initialization for NEW plane
+  #pragma omp parallel for schedule(static)
+	for (uint j = 0; j < ysize + 2; j++) 
+	{
+	    for (uint i = 0; i < xsize + 2; i++) 
+	    {
+		planes[NEW].data[j * fsize + i] = 0.0;
+	    }
+	}
   
   // ····························�···
   // allocate the heat sources

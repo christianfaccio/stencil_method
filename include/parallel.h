@@ -135,14 +135,8 @@ static inline int memory_allocate ( 	const int	*neighbours,
   */ 
   unsigned int frame_size = (planes_ptr[OLD].size[_x_]+2) * (planes_ptr[OLD].size[_y_]+2);
 
-  planes_ptr[OLD].data = (double*)calloc( 2*frame_size, sizeof(double));// Allocate one big block using calloc
-                                                                        // such that values are initialized to 0
-  if ( planes_ptr[OLD].data == NULL )
-    return 3;
-
-  planes_ptr[NEW].data = planes_ptr[OLD].data + frame_size; 		// points to second half
-  if ( planes_ptr[NEW].data == NULL )
-    return 4;
+  planes_ptr[OLD].data = (double*)malloc( 2*frame_size*sizeof(double));
+  planes_ptr[NEW].data = planes_ptr[OLD].data + frame_size; // points to second half
 
   // ··················································
   // buffers for north and south communication 
@@ -167,9 +161,7 @@ static inline int memory_allocate ( 	const int	*neighbours,
       		if ( neighbours[dir] != MPI_PROC_NULL )
         	{
           		unsigned int bufsize = (dir < 2? planes_ptr[OLD].size[_x_] : planes_ptr[OLD].size[_y_]);
-          		buffers_ptr[sr][dir] = (double*)malloc( bufsize * sizeof(double) );
-          		if ( buffers_ptr[sr][dir] == NULL )
-            			return 5;
+          		buffers_ptr[sr][dir] = (double*)calloc( bufsize, sizeof(double) );
         	}
       		else
         	{
